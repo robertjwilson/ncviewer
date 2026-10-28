@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import pytest
 from simulations import nemo_simulation, regular_file
 
@@ -113,3 +114,39 @@ def test_resolution():
     assert catalogue.resolution(["2000-01-01 00:00:00", "2000-01-01 06:00:00", "2000-01-01 12:00:00", "2000-01-01 18:00:00"]) == "6-hourly"
     assert catalogue.resolution([f"2000-01-{day:02d} 12:00:00" for day in range(1, 31, 5)]) == "5-daily"
     assert catalogue.resolution([f"{year}-07-01 00:00:00" for year in range(2000, 2005)]) == "annual"
+
+
+def test_missing_mask():
+    import xarray as xr
+
+    from ncviewer.catalogue import missing_mask
+
+    data = xr.DataArray(np.array([[0, -999, 5.5, 1e20, np.nan]], dtype="float32"))
+    assert missing_mask(data, []).values.sum() == 0
+    # a single number, and a float32 1e20, which is not the float64 one
+    assert missing_mask(data, [(-999, -999)]).values.tolist() == [[False, True, False, False, False]]
+    assert missing_mask(data, [(1e20, 1e20)]).values.tolist() == [[False, False, False, True, False]]
+    # a range includes both ends, and its ends can be either way round
+    assert missing_mask(data, [(-999, 0)]).values.tolist() == [[True, True, False, False, False]]
+    assert missing_mask(data, [(5.5, 0)]).values.tolist() == [[True, False, True, False, False]]
+    # several, and NaN never matches
+    assert missing_mask(data, [(0, 0), (1e20, 1e20)]).values.sum() == 2
+    # a number too big for the type matches nothing, and is no error
+    assert missing_mask(data, [(1e40, 1e41)]).values.sum() == 0
+    integers = xr.DataArray(np.array([0, 1, 2, 3]))
+    assert missing_mask(integers, [(1, 2)]).values.tolist() == [False, True, True, False]
+    assert missing_mask(integers, [(0.5, 1.5)]).values.tolist() == [False, True, False, False]
+
+
+def test_field_with_missing_values(found):
+    data, _ = found.field(0, "votemper", 0, 0)
+    assert data.attrs["n_missing"] == 0
+    rows = sorted(set(np.round(data.values[np.isfinite(data.values)], 3)))
+    low = float(rows[0])
+    masked, _ = found.field(0, "votemper", 0, 0, [(low, low)])
+    assert masked.attrs["n_missing"] > 0
+    assert np.isnan(masked.values).sum() == np.isnan(data.values).sum() + masked.attrs["n_missing"]
+    assert float(np.nanmin(masked.values)) > low
+    # everything from the lowest to the highest
+    everything, _ = found.field(0, "votemper", 0, 0, [(low - 1, float(rows[-1]) + 1)])
+    assert np.isnan(everything.values).all()

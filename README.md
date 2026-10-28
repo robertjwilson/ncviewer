@@ -46,6 +46,11 @@ and so does Ctrl+C.
   You can choose 0 to 5 from the box's list, or type any number.
 - **File filters** (optional): words a file name must not contain, or must contain.
   Restart files are always left out.
+- **Missing values** (optional): numbers that mean there is no data but are not marked as
+  missing in the files, such as 0 or -999. Add one number, or fill in To as well for a
+  range (both ends are included). Cells with these values are set to missing for every
+  variable, before the map is drawn, so they are left blank and do not stretch the colour
+  scale. The viewer says how many cells were set to missing. Go Back to change them.
 
 ncviewer counts the files as you type. **Continue** reads the times of every file (only
 the time variable is read) and the variables of the first file of each file type. Files

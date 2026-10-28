@@ -379,10 +379,12 @@ class Catalogue:
         _, index, at = steps[step]
         return stream, stream["files"][index], at, stream["times"][step]
 
-    def field(self, stream, name, step=0, level=0):
+    def field(self, stream, name, step=0, level=0, missing=()):
         """The 2-D slice of variable name at time step and level, as
         a loaded DataArray with its longitude/latitude as coords, and the
-        time it is at."""
+        time it is at. missing is a list of (low, high) ranges (see
+        missing_mask): cells with such values are set to NaN, and how many
+        there were is in the array's attrs["n_missing"]."""
         about = self.about(stream, name)
         record, path, at, when = self._step(stream, step)
         select = {}
@@ -399,7 +401,35 @@ class Catalogue:
             for key in (about["lon"], about["lat"]):
                 if key is not None and key not in data.coords and key in ds.variables:
                     data = data.assign_coords({key: ds[key].load()})
+        mask = missing_mask(data, missing)
+        data = data.where(~mask)
+        data.attrs["n_missing"] = int(mask.sum())
         return data, (when if about["time_dim"] else None)
+
+
+def _bound(value, dtype):
+    """value as the data's own type, so that 1e20 matches a float32 1e20
+    (which is not the float64 1e20), and a value too big for the type is
+    infinite instead of an error."""
+    if np.issubdtype(dtype, np.floating):
+        limit = float(np.finfo(dtype).max)
+        if abs(value) > limit:
+            return np.inf if value > 0 else -np.inf
+        return dtype.type(value)
+    return value
+
+
+def missing_mask(data, ranges):
+    """A boolean DataArray, True where data (an xarray DataArray) has a value
+    the user says is missing: ranges is a list of (low, high), a single
+    number being (x, x), and both ends are included. NaN never matches."""
+    mask = xr.zeros_like(data, dtype=bool)
+    for low, high in ranges:
+        if low > high:
+            low, high = high, low
+        low, high = _bound(low, data.dtype), _bound(high, data.dtype)
+        mask = mask | ((data >= low) & (data <= high))
+    return mask
 
 
 def mappable(about):

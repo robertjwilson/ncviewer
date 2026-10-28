@@ -60,7 +60,11 @@ def test_probe_then_view(running, simulation):
     found = _get(base, "api/probe", token=token, simdir=simulation, ndown="")
     assert found["layout"]["ndown"] == 2
     assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "5"})["ok"] is False
-    assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2"})["ok"] is True
+    # a missing value that is not a number is said so, and nothing is read
+    refused = _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2", "missing": '[["abc",""]]'})
+    assert refused == {"ok": False, "error": "Missing value 1: 'abc' is not a number."}
+    assert app.view == "files"
+    assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2", "missing": '[["-999",""]]'})["ok"] is True
     _wait_for(app, "viewer")
     summary = _get(base, "api/catalogue", token=token)
     assert summary["files"] == 48
@@ -68,6 +72,17 @@ def test_probe_then_view(running, simulation):
     assert reply["ok"] and reply["file"].startswith("2000/04/")
     assert reply["when"] == "2000-04-16 00:00:00"
     assert reply["clim"][0] < reply["clim"][1]
+    assert reply["n_missing"] == 0
+    # the missing values were given on page 1: the warmest and coldest cells go, and the scale narrows
+    lo, hi = reply["clim"]
+    app.missing = [(lo, lo + 0.01), (hi - 0.01, hi)]
+    narrower = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    assert narrower["n_missing"] > 0
+    assert lo < narrower["clim"][0] and narrower["clim"][1] < hi
+    app.missing = [(-1e9, 1e9)]
+    everything = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    assert everything["ok"] and any("Every cell is missing" in note for note in everything["notes"])
+    app.missing = []
     reply = _get(base, "api/plot", token=token, stream=0, var="votemper", vmin=0, vmax=30)
     assert reply["clim"] == [0, 30]
     assert _get(base, "api/plot", token=token, stream=0, var="nothing")["ok"] is False
@@ -112,3 +127,12 @@ def test_folders_like(tmp_path):
     assert ncapp.folders_like(str(tmp_path / "a")) == [str(tmp_path / "alpha") + "/"]
     assert len(ncapp.folders_like(str(tmp_path) + "/")) == 2
     assert ncapp.folders_like("") == []
+
+
+def test_parse_missing():
+    assert ncapp.parse_missing("") == []
+    assert ncapp.parse_missing('[["-999",""],["0","5"],["",""]]') == [(-999.0, -999.0), (0.0, 5.0)]
+    assert ncapp.parse_missing('[[" 1e20 ", ""]]') == [(1e20, 1e20)]
+    for bad in ('[["abc",""]]', '[["1","x"]]', '[["","3"]]', '[["nan",""]]', '[["inf",""]]', "not json", '{"a": 1}'):
+        with pytest.raises(ValueError):
+            ncapp.parse_missing(bad)

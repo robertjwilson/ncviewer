@@ -11,6 +11,7 @@ what they hold (ncviewer.catalogue); page 2 is the viewer.
 import argparse
 import contextlib
 import json
+import math
 import os
 import secrets
 import select
@@ -89,7 +90,9 @@ class App:
         self.version = 0
         self._changed = threading.Condition()
         self.view = "files"
-        self.setup = {"simdir": simdir, "ndown": str(ndown), "exclude": "", "require": ""}
+        self.setup = {"simdir": simdir, "ndown": str(ndown), "exclude": "", "require": "", "missing": ""}
+        # the numbers the user says are missing, from page 1, as (low, high) ranges
+        self.missing = []
         self.scan = None
         self.error = None
         self.catalogue = None
@@ -142,8 +145,12 @@ class App:
 
     def start_scan(self, form):
         """Read what the files hold, in a thread, then show the viewer."""
-        setup = {key: str(form.get(key, "")).strip() for key in ("simdir", "ndown", "exclude", "require")}
-        found = found_files.probe(**setup)
+        setup = {key: str(form.get(key, "")).strip() for key in ("simdir", "ndown", "exclude", "require", "missing")}
+        try:
+            missing = parse_missing(setup["missing"])
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        found = found_files.probe(**{key: setup[key] for key in ("simdir", "ndown", "exclude", "require")})
         if found["directory"] != "found":
             return {"ok": False, "error": "That directory cannot be found."}
         if found["ndown"] is None:
@@ -154,6 +161,7 @@ class App:
             self._scan_number += 1
             number = self._scan_number
             self.setup = setup
+            self.missing = missing
             self.view = "scanning"
             self.error = None
             self.scan = {"phase": "files", "done": 0, "total": found["files"]}
@@ -221,7 +229,8 @@ class App:
         step, level = int(query.get("step") or 0), int(query.get("level") or 0)
         try:
             about = found.about(stream, name)
-            data, when = found.field(stream, name, step, level)
+            data, when = found.field(stream, name, step, level, self.missing)
+            n_missing = data.attrs.get("n_missing", 0)
             item, notes, clim = plotting.map_plot(
                 data, about, name, when,
                 cmap=query.get("cmap") or None,
@@ -230,10 +239,12 @@ class App:
                 log=query.get("log") == "1",
                 coast=query.get("coast") == "1",
             )
+            if n_missing and not data.notnull().any():
+                notes.append("Every cell is missing, so there is nothing to show. Check the missing values.")
             record = found.streams[int(stream)]
             _, index, _ = record["steps"][min(max(step, 0), len(record["steps"]) - 1)]
             return {
-                "ok": True, "item": item, "notes": notes, "clim": clim, "when": when,
+                "ok": True, "item": item, "notes": notes, "clim": clim, "when": when, "n_missing": n_missing,
                 "file": os.path.relpath(record["files"][index], found.simdir),
             }
         except Exception as error:  # noqa: BLE001 - told to the page
@@ -297,6 +308,41 @@ def _has_geoviews():
         return all(importlib.util.find_spec(name) is not None for name in ("geoviews", "cartopy"))
     except (ImportError, ValueError):
         return False
+
+
+def parse_missing(text):
+    """The numbers the user says are missing, from the page's JSON: rows of
+    [from, to], each a number as text, and to empty for a single number.
+    Returns [(low, high), ...]. Rows with nothing in them are ignored.
+    Raises ValueError, in words for the user, for anything else."""
+    if not text:
+        return []
+    try:
+        rows = json.loads(text)
+        assert isinstance(rows, list)
+    except (ValueError, AssertionError):
+        raise ValueError("The missing values could not be read.") from None
+    ranges = []
+    for number, row in enumerate(rows, 1):
+        parts = [str(part).strip() for part in (list(row) + ["", ""])[:2]]
+        if not any(parts):
+            continue
+        values = []
+        for part in parts:
+            if part == "":
+                values.append(None)
+                continue
+            try:
+                value = float(part)
+            except ValueError:
+                value = float("nan")
+            if not math.isfinite(value):
+                raise ValueError(f"Missing value {number}: {part!r} is not a number.")
+            values.append(value)
+        if values[0] is None:
+            raise ValueError(f"Missing value {number}: fill in From, not only To.")
+        ranges.append((values[0], values[0] if values[1] is None else values[1]))
+    return ranges
 
 
 def _number(text):

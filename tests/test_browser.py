@@ -37,10 +37,43 @@ def test_files_page_finds_the_depth(page, simulation):
     assert not tab.is_enabled("#continue")
 
 
+def test_missing_values_on_the_files_page(page, simulation):
+    tab, app = page
+    tab.fill("#f-simdir", simulation)
+    tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    assert tab.locator("#missing-rows .missing__row").count() == 0
+    tab.click("#missing-add")
+    tab.fill("#missing-from-0", "abc")
+    # a box that is not a number is marked, and Continue waits
+    assert "is-invalid" in tab.get_attribute("#missing-from-0", "class")
+    assert tab.is_disabled("#continue")
+    assert "not a number" in tab.text_content("#m-files")
+    tab.fill("#missing-from-0", "-999")
+    tab.click("#missing-add")
+    tab.fill("#missing-from-1", "10")
+    tab.fill("#missing-to-1", "12.5")
+    assert tab.is_enabled("#continue")
+    # a row is removed by its button
+    tab.click("#missing-add")
+    tab.click("[aria-label='Remove missing value 3']")
+    assert tab.locator("#missing-rows .missing__row").count() == 2
+    tab.click("#continue")
+    tab.wait_for_function("() => document.querySelector('#view-viewer:not([hidden])')", timeout=60000)
+    assert app.missing == [(-999.0, -999.0), (10.0, 12.5)]
+    # going back shows them again
+    tab.click("#back")
+    tab.wait_for_selector("#view-files:not([hidden])")
+    assert tab.input_value("#missing-from-1") == "10"
+
+
 def test_viewer(page, simulation):
     tab, app = page
     tab.fill("#f-simdir", simulation)
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    tab.click("#missing-add")
+    # the coldest cells of the first map, which the colour scale then leaves out
+    tab.fill("#missing-from-0", "0")
+    tab.fill("#missing-to-0", "11.3")
     tab.click("#continue")
     tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
     tab.fill("#v-search", "chloro")
@@ -54,6 +87,7 @@ def test_viewer(page, simulation):
     tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert "ptrc_T" in tab.text_content("#plot-notes")
+    assert "set to missing" in tab.text_content("#plot-notes")
     # the map fills its box, not a strip of axes
     assert tab.locator("#plot .bk-Figure, #plot > div").first.bounding_box()["height"] > 300
     tab.click("#v-next")
