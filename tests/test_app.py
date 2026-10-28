@@ -164,38 +164,3 @@ def test_parse_names():
     for bad in ("x", '{"a": 1}', "[1]"):
         with pytest.raises(ValueError):
             ncapp.parse_names(bad)
-
-
-def test_time_series_job(running, simulation):
-    app, base, token = running
-    assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2"})["ok"] is True
-    _wait_for(app, "viewer")
-    state = _get(base, "api/state", token=token)
-    assert 1 <= state["cores"] <= state["max_cores"] and state["parallel_from"] == 40
-    click = {"stream": "1", "vars": '["chl"]', "step": "0", "level": "1", "x": 5.2, "y": 6.4, "frame": "index"}
-    started = _post(base, "api/series", token, {**click, "cores": "1"})
-    assert started["ok"] and (started["cell"]["j"], started["cell"]["i"]) == (6, 5)
-    deadline = time.monotonic() + 30
-    while True:
-        status = _get(base, "api/series", token=token, job=started["job"])
-        if status.get("finished") or time.monotonic() > deadline:
-            break
-        time.sleep(0.05)
-    assert status["ok"] and status["done"] == status["total"] == 24
-    assert "Chlorophyll (mg m-3), at 7.200°W 50.500°N, 5 m" in str(status["item"])
-    # cores that are not a whole number from 1 to the cores there are, said in words
-    for bad in ("0", "x", str(state["max_cores"] + 1)):
-        refused = _post(base, "api/series", token, {**click, "cores": bad})
-        assert refused == {"ok": False, "error": f"Cores is a whole number from 1 to {state['max_cores']}."}
-    # empty: the default
-    assert _post(base, "api/series", token, {**click, "cores": ""})["ok"]
-    # outside the grid, and not a point
-    assert _post(base, "api/series", token, {**click, "x": 400})["error"] == "That point is outside the grid."
-    assert _post(base, "api/series", token, {**click, "x": "nan"})["error"] == "That point could not be read."
-    assert _post(base, "api/series", token, {**click, "frame": "other"})["error"] == "That point could not be read."
-    # a variable the file type does not have is said so
-    assert _post(base, "api/series", token, {**click, "vars": '["chl", "nothing"]'})["ok"] is False
-    # stopping it: its job is gone
-    started = _post(base, "api/series", token, click)
-    assert _post(base, "api/series_stop", token, {}) == {"ok": True}
-    assert _get(base, "api/series", token=token, job=started["job"])["ok"] is False

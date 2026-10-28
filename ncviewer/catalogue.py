@@ -18,7 +18,6 @@ import numpy as np
 import xarray as xr
 
 from . import files as found_files
-from . import series as cell_series
 from . import times as file_times
 from .times import natural_key
 
@@ -27,10 +26,8 @@ from .times import natural_key
 LOCK = threading.RLock()
 
 # read in a pool of processes once there are this many files to read
-PARALLEL_FROM = cell_series.PARALLEL_FROM
+PARALLEL_FROM = 40
 WORKERS = 4
-# the files a worker reads at a time for a time series
-SERIES_BATCH = 16
 
 # the names of vertical dimensions, as OceanVal tells them
 _VERTICAL = ("depth", "lev", "sig", "s_rho", "z", "height", "nz", "deptht", "depthu", "depthv", "depthw")
@@ -298,10 +295,6 @@ class Catalogue:
         self.ndown = ndown
         self.streams = streams
         self._open = OrderedDict()
-        # the processes time series are read in (see series)
-        self._pool = None
-        self._pool_cores = None
-        self._pool_lock = threading.Lock()
 
     # ---- what the viewer is told ----
 
@@ -374,7 +367,6 @@ class Catalogue:
         return ds
 
     def close(self):
-        self._drop_pool()
         with LOCK:
             for ds in self._open.values():
                 ds.close()
@@ -482,170 +474,6 @@ class Catalogue:
         (low, high), symmetric = colour_limits([low, high])
         return low, high, symmetric
 
-    # ---- the time series of a cell ----
-
-    def cell(self, stream, names, x, y, frame="lonlat", step=0, level=0, missing=()):
-        """The cell a click on the map at (x, y) is for: {"j", "i", "lon",
-        "lat"}, j and i its indices along the variable's two horizontal
-        dimensions. frame is what the map's x and y are: "lonlat",
-        "mercator" (the map with coastlines, which geoviews draws in Web
-        Mercator) or "index" (the grid's own indices). The cell is the one
-        nearest that has a value in the map shown (time step, level and the
-        user's missing values), within 2 cells of the nearest of all, so a
-        click on the coast is taken to the sea. Raises ValueError, in words
-        for the user, if there is none."""
-        about = self.combined(stream, names)
-        data, _ = self.field(stream, names, step, level, missing)
-        y_dim, x_dim = about["horizontal"][-2:]
-        data = data.transpose(y_dim, x_dim)
-        has_values = np.isfinite(data.values)
-        lons = lats = None
-        if frame != "index" and about["lon"] in data.coords and about["lat"] in data.coords:
-            lons, lats = (np.asarray(part.transpose(y_dim, x_dim).values, dtype="float64")
-                          for part in xr.broadcast(data[about["lon"]], data[about["lat"]]))
-        if frame == "mercator":
-            x, y = mercator_to_lonlat(x, y)
-        ny, nx = data.shape
-
-        if lons is None:
-            def distance(jj, ii):
-                return np.hypot(np.asarray(jj) - y, np.asarray(ii) - x)
-
-            def apart(j0, i0, j1, i1):
-                return np.hypot(j1 - j0, i1 - i0)
-
-            j0, i0 = int(min(max(round(y), 0), ny - 1)), int(min(max(round(x), 0), nx - 1))
-        else:
-            def apart(j0, i0, j1, i1):
-                dlon = (lons[j1, i1] - lons[j0, i0] + 180) % 360 - 180
-                return np.hypot(dlon * np.cos(np.radians(lats[j0, i0])), lats[j1, i1] - lats[j0, i0])
-
-            def distance(jj, ii):
-                dlon = (lons[jj, ii] - x + 180) % 360 - 180
-                found = np.hypot(dlon * np.cos(np.radians(y)), lats[jj, ii] - y)
-                return np.where(np.isfinite(found), found, np.inf)
-
-            whole = distance(slice(None), slice(None))
-            j0, i0 = (int(at) for at in np.unravel_index(int(np.argmin(whole)), (ny, nx)))
-        # the spacing of the grid there: the farthest of the cell's neighbours
-        spacing = max(
-            [float(apart(j0, i0, j1, i1)) for j1, i1 in ((j0 - 1, i0), (j0 + 1, i0), (j0, i0 - 1), (j0, i0 + 1))
-             if 0 <= j1 < ny and 0 <= i1 < nx and np.isfinite(apart(j0, i0, j1, i1))] or [1.0]
-        )
-        if not float(distance(j0, i0)) <= 2 * spacing:
-            raise ValueError("That point is outside the grid.")
-        jj, ii = np.mgrid[max(j0 - 2, 0):min(j0 + 3, ny), max(i0 - 2, 0):min(i0 + 3, nx)]
-        jj, ii = jj.ravel(), ii.ravel()
-        keep = has_values[jj, ii]
-        if not keep.any():
-            raise ValueError("There is no data within 2 cells of that point in the map shown.")
-        jj, ii = jj[keep], ii[keep]
-        best = int(np.argmin(distance(jj, ii)))
-        j, i = int(jj[best]), int(ii[best])
-        found = {"j": j, "i": i, "lon": None, "lat": None}
-        if about["lon"] in data.coords and about["lat"] in data.coords:
-            lon, lat = (np.asarray(part.transpose(y_dim, x_dim).values, dtype="float64")[j, i]
-                        for part in xr.broadcast(data[about["lon"]], data[about["lat"]]))
-            if np.isfinite(lon) and np.isfinite(lat):
-                found.update(lon=float(lon), lat=float(lat))
-        return found
-
-    def _pool_of(self, cores):
-        """The pool of cores processes the series are read in, kept for the
-        next series (made again if the cores are changed)."""
-        with self._pool_lock:
-            if self._pool is not None and self._pool_cores != cores:
-                self._pool.shutdown(wait=False, cancel_futures=True)
-                self._pool = None
-            if self._pool is None:
-                self._pool = concurrent.futures.ProcessPoolExecutor(cores, mp_context=multiprocessing.get_context("spawn"))
-                self._pool_cores = cores
-            return self._pool
-
-    def _drop_pool(self):
-        with self._pool_lock:
-            if self._pool is not None:
-                self._pool.shutdown(wait=False, cancel_futures=True)
-            self._pool = None
-
-    def series(self, stream, names, level, j, i, missing=(), cores=1, progress=lambda done, total: None,
-               stopped=lambda: False):
-        """The values of the variable names (or their sum, see combined) at
-        cell (j, i) and level through every time of the stream: (times,
-        values), values a float64 array, NaN where missing. Only that cell
-        is read of each file (ncviewer.series), in a pool of cores processes
-        when there are PARALLEL_FROM files or more. missing are the user's
-        missing values, set to NaN in each variable before they are added.
-        progress(done, total) is told the files read, and stopped() is asked
-        whether to give up (raising Stopped)."""
-        names = [names] if isinstance(names, str) else list(names)
-        about = self.combined(stream, names)
-        if not about["time_dim"]:
-            raise ValueError(f"{about['name']} has no time, so it has no time series.")
-        record = self.streams[int(stream)]
-        y_dim, x_dim = about["horizontal"][-2:]
-        index = []
-        for dim, size in zip(about["dims"], about["shape"]):
-            if dim == about["time_dim"]:
-                index.append(None)
-            elif dim == about["vertical"]:
-                index.append(min(max(int(level), 0), size - 1))
-            elif dim == y_dim:
-                index.append(int(j))
-            elif dim == x_dim:
-                index.append(int(i))
-            else:
-                index.append(0)
-        wanted = sorted({at for _, at, _ in record["steps"]})
-        tasks = {at: (record["files"][at], names, index) for at in wanted}
-        read = {}
-        progress(0, len(tasks))
-
-        def keep(batch, results):
-            for at, values in zip(batch, results):
-                read[at] = values
-            progress(len(read), len(tasks))
-
-        parallel = cores > 1 and len(tasks) >= PARALLEL_FROM
-        # in this process, one file at a time, so the page can count them; in the pool, batches small
-        # enough that every worker has several and the count moves
-        size = max(1, min(SERIES_BATCH, len(wanted) // (cores * 4))) if parallel else 1
-        batches = [wanted[start:start + size] for start in range(0, len(wanted), size)]
-        if parallel:
-            try:
-                pool = self._pool_of(cores)
-                futures = {pool.submit(cell_series.read_files, [tasks[at] for at in batch]): batch
-                           for batch in batches}
-                try:
-                    for future in concurrent.futures.as_completed(futures):
-                        if stopped():
-                            raise Stopped()
-                        keep(futures[future], future.result())
-                except BaseException:
-                    for future in futures:
-                        future.cancel()
-                    raise
-            except (concurrent.futures.process.BrokenProcessPool, OSError):
-                # workers that could not start (a __main__ they cannot import): the rest are read here
-                self._drop_pool()
-        for batch in batches:
-            if all(at in read for at in batch):
-                continue
-            if stopped():
-                raise Stopped()
-            with LOCK:
-                results = [cell_series.point_values(*tasks[at]) for at in batch]
-            keep(batch, results)
-
-        total = None
-        for name in names:
-            values = np.full(len(record["steps"]), np.nan)
-            for number, (_, at, position) in enumerate(record["steps"]):
-                found = missing_values(read[at][name], missing)
-                values[number] = found[min(position, found.size - 1)] if found.ndim else found
-            total = values if total is None else total + values
-        return list(record["times"]), total
-
 
 def _bound(value, dtype):
     """value as the data's own type, so that 1e20 matches a float32 1e20
@@ -657,32 +485,6 @@ def _bound(value, dtype):
             return np.inf if value > 0 else -np.inf
         return dtype.type(value)
     return value
-
-
-def missing_values(values, ranges):
-    """values (a numpy array) with the user's missing values (ranges, as in
-    missing_mask) set to NaN, as a float array."""
-    values = np.asarray(values)
-    if values.dtype.kind != "f":
-        values = values.astype("float64")
-    mask = np.zeros(values.shape, dtype=bool)
-    for low, high in ranges:
-        if low > high:
-            low, high = high, low
-        low, high = _bound(low, values.dtype), _bound(high, values.dtype)
-        mask |= (values >= low) & (values <= high)
-    if mask.any():
-        values = np.where(mask, np.nan, values)
-    return values
-
-
-def mercator_to_lonlat(x, y):
-    """The longitude and latitude of a point in Web Mercator metres, which
-    is how geoviews draws a map in Bokeh."""
-    radius = 6378137.0
-    lon = np.degrees(x / radius)
-    lat = np.degrees(2 * np.arctan(np.exp(y / radius)) - np.pi / 2)
-    return float(lon), float(lat)
 
 
 def missing_mask(data, ranges):

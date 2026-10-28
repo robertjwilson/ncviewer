@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, browser, series
+from . import __version__, browser
 from . import files as found_files
 
 # a page not heard from for this long has gone; one that said its tab is hidden, after HIDDEN_PAGE_TIMEOUT
@@ -98,9 +98,6 @@ class App:
         self.catalogue = None
         self.catalogue_number = 0
         self._scan_number = 0
-        # the time series being read, or read (see start_series), and the number of the latest
-        self.series_job = None
-        self._series_number = 0
         # page -> when it was last heard from, whether its tab is hidden, and its requests waiting
         self.pages = {}
         self.closed = threading.Event()
@@ -136,9 +133,6 @@ class App:
                 "error": self.error,
                 "catalogue_number": self.catalogue_number if self.catalogue else None,
                 "coast": _has_geoviews(),
-                "cores": series.default_cores(),
-                "max_cores": series.max_cores(),
-                "parallel_from": series.PARALLEL_FROM,
                 "closed": self.closed.is_set(),
             }
 
@@ -239,7 +233,7 @@ class App:
             name = about["name"]
             data, when = found.field(stream, names, step, level, self.missing)
             n_missing = data.attrs.get("n_missing", 0)
-            item, notes, clim, frame = plotting.map_plot(
+            item, notes, clim = plotting.map_plot(
                 data, about, name, when,
                 cmap=query.get("cmap") or None,
                 vmin=_number(query.get("vmin")),
@@ -257,7 +251,7 @@ class App:
             _, index, _ = record["steps"][min(max(step, 0), len(record["steps"]) - 1)]
             return {
                 "ok": True, "item": item, "notes": notes, "clim": clim, "when": when, "n_missing": n_missing,
-                "file": os.path.relpath(record["files"][index], found.simdir), "frame": frame,
+                "file": os.path.relpath(record["files"][index], found.simdir),
             }
         except ValueError as error:
             # said in words for the user
@@ -285,92 +279,6 @@ class App:
         if got is None:
             return {"ok": False, "error": "Every cell is missing, so there is nothing to show. Check the missing values."}
         return {"ok": True, "vmin": got[0], "vmax": got[1], "symmetric": got[2]}
-
-    # ---- the time series at a cell the map was clicked at ----
-
-    def start_series(self, body):
-        """Find the cell clicked (body: stream, vars, step, level, x, y,
-        frame, cores) and start reading its time series in a thread (one at
-        a time: one still reading is stopped). Returns {"ok", "job", "cell"}
-        at once, or {"ok": False, "error"}; series_status says how it goes."""
-        found = self.catalogue
-        if found is None:
-            return {"ok": False, "error": "Nothing has been read yet."}
-        self.stop_series()
-        try:
-            cores = parse_cores(body.get("cores"))
-            stream = str(body.get("stream", "0"))
-            names = parse_names(body.get("vars"))
-            level = int(body.get("level") or 0)
-            x, y = float(body["x"]), float(body["y"])
-            if not (math.isfinite(x) and math.isfinite(y)):
-                raise ValueError("That point could not be read.")
-            frame = str(body.get("frame") or "lonlat")
-            if frame not in ("lonlat", "mercator", "index"):
-                raise ValueError("That point could not be read.")
-            about = found.combined(stream, names)
-            cell = found.cell(stream, names, x, y, frame, int(body.get("step") or 0), level, self.missing)
-        except (KeyError, TypeError):
-            return {"ok": False, "error": "That point could not be read."}
-        except ValueError as error:
-            return {"ok": False, "error": str(error)}
-        except Exception as error:  # noqa: BLE001 - told to the page
-            traceback.print_exc()
-            return {"ok": False, "error": f"{type(error).__name__}: {error}"}
-        with self._changed:
-            self._series_number += 1
-            number = self._series_number
-            job = self.series_job = {"job": number, "done": 0, "total": 0, "finished": False, "cell": cell}
-        args = (number, job, found, stream, names, level, cell, about, cores)
-        threading.Thread(target=self._read_series, args=args, daemon=True).start()
-        return {"ok": True, "job": number, "cell": cell}
-
-    def _read_series(self, number, job, found, stream, names, level, cell, about, cores):
-        from . import catalogue, plotting
-
-        def current():
-            return number == self._series_number and self.catalogue is found and not self.closed.is_set()
-
-        def progress(done, total):
-            job.update(done=done, total=total)
-
-        try:
-            times, values = found.series(
-                stream, names, level, cell["j"], cell["i"], self.missing, cores,
-                progress=progress, stopped=lambda: not current(),
-            )
-            record = found.streams[int(stream)]
-            item, notes = plotting.series_plot(
-                times, values, about, about["name"], where_text(about, cell, level), dated=record["has_times"],
-            )
-            if about["units_differ"]:
-                notes.append(
-                    f"The units differ ({', '.join(u or 'none' for u in about['units_differ'])}), so the sum may not mean anything."
-                )
-            reply = {"ok": True, "finished": True, "item": item, "notes": notes}
-        except catalogue.Stopped:
-            return
-        except ValueError as error:
-            reply = {"ok": False, "finished": True, "error": str(error)}
-        except Exception as error:  # noqa: BLE001 - told to the page
-            traceback.print_exc()
-            reply = {"ok": False, "finished": True, "error": f"{type(error).__name__}: {error}"}
-        job.update(reply)
-
-    def series_status(self, job):
-        """How the time series job is going: {"ok", "done", "total"} while
-        it is read, then {"ok", "finished", "item", "notes"}, or {"ok":
-        False, "error"}."""
-        current = self.series_job
-        if current is None or str(current["job"]) != str(job):
-            return {"ok": False, "finished": True, "stopped": True, "error": "That time series is no longer being read."}
-        return {"ok": True, **current}
-
-    def stop_series(self):
-        with self._changed:
-            self._series_number += 1
-            self.series_job = None
-        return {"ok": True}
 
     # ---- pages coming and going ----
 
@@ -440,37 +348,6 @@ def parse_names(text):
     except (ValueError, AssertionError):
         raise ValueError("The variables could not be read.") from None
     return names
-
-
-def parse_cores(text):
-    """The number of processes to read a time series with: a whole number
-    from 1 to the cores there are. Raises ValueError, in words for the user."""
-    text = str(text if text is not None else "").strip()
-    if not text:
-        return series.default_cores()
-    most = series.max_cores()
-    if not text.isdigit() or not 1 <= int(text) <= most:
-        raise ValueError(f"Cores is a whole number from 1 to {most}.")
-    return int(text)
-
-
-def where_text(about, cell, level):
-    """Where a time series is, for its title: ", at 4.250°E 51.600°N" (or the
-    cell's indices) and the depth."""
-    if cell.get("lon") is not None:
-        lon, lat = cell["lon"], cell["lat"]
-        lon = (lon + 180) % 360 - 180
-        text = f", at {abs(lon):.3f}°{'W' if lon < 0 else 'E'} {abs(lat):.3f}°{'S' if lat < 0 else 'N'}"
-    else:
-        y_dim, x_dim = about["horizontal"][-2:]
-        text = f", at {y_dim}={cell['j']}, {x_dim}={cell['i']}"
-    if about.get("vertical") and about.get("levels", 1) > 1:
-        values = about.get("level_values") or []
-        level = min(max(int(level), 0), len(values) - 1) if values else 0
-        value = values[level] if values else level
-        units = f" {about['level_units']}" if about.get("level_units") else ""
-        text += f", {value:g}{units}" if isinstance(value, (int, float)) else f", level {level}"
-    return text
 
 
 def parse_missing(text):
@@ -589,8 +466,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_json(app.plot(query))
         elif url.path == "/api/limits":
             self._reply_json(app.limits(query))
-        elif url.path == "/api/series":
-            self._reply_json(app.series_status(query.get("job")))
         else:
             self._reply(404, b"Not found", "text/plain")
 
@@ -610,10 +485,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_json(app.start_scan(body))
         elif path == "/api/back":
             self._reply_json(app.back())
-        elif path == "/api/series":
-            self._reply_json(app.start_series(body))
-        elif path == "/api/series_stop":
-            self._reply_json(app.stop_series())
         elif path == "/api/visibility":
             self._reply_json(app.page_visibility(body.get("page", ""), body.get("hidden")))
         else:

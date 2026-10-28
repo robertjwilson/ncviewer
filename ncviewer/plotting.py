@@ -13,12 +13,10 @@ extent (get_coastline) when geoviews is there.
 import warnings
 
 import holoviews as hv
-import hvplot.pandas  # noqa: F401 - registers .hvplot
 import hvplot.xarray  # noqa: F401 - registers .hvplot
 import numpy as np
 import pandas as pd
 from bokeh.embed import json_item
-from bokeh.models import CustomJS
 
 # a quadmesh of more cells than this is thinned out to it, as a browser draws each cell
 MAX_QUADS = 250_000
@@ -37,15 +35,10 @@ def has_geoviews():
     return True
 
 
-def _render(plot, tap=False):
+def _render(plot):
     figure = hv.render(plot, backend="bokeh")
     figure.sizing_mode = "stretch_both"
     figure.toolbar.logo = None
-    if tap:
-        # a click on the map is told to the page, which asks for the time series there
-        figure.js_on_event("tap", CustomJS(code=(
-            "document.dispatchEvent(new CustomEvent('ncviewer-tap', {detail: {x: cb_obj.x, y: cb_obj.y}}));"
-        )))
     return json_item(figure)
 
 
@@ -118,9 +111,7 @@ def coastline_scale(lon, lat):
 
 def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=False, coast=False):
     """The map of a 2-D slice (see Catalogue.field), as (json_item, notes,
-    the colour scale's limits, frame), frame being what its x and y are:
-    "lonlat", "mercator" (with coastlines, as geoviews draws them) or
-    "index" (the grid's own indices), for the cell a click is at."""
+    the colour scale's limits)."""
     notes = []
     data = data.squeeze(drop=True).astype("float64")
     data.name = name
@@ -184,54 +175,4 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
             plot = data.hvplot.quadmesh(**options)
         else:
             plot = data.hvplot.image(**options)
-    frame = "index" if lon is None else ("mercator" if geographic else "lonlat")
-    return _render(plot, tap=True), notes, [float(low), float(high)], frame
-
-
-def time_axis(times):
-    """The times (ISO strings) as the x of a plot: datetimes where pandas can
-    take them all (the standard calendars), otherwise decimal years (360-day
-    and the like, or years pandas cannot hold), and the axis's label."""
-    try:
-        return pd.to_datetime(pd.Series(times), format="ISO8601"), "Time"
-    except (ValueError, TypeError, OverflowError):
-        pass
-    years = []
-    for stamp in times:
-        negative = stamp.startswith("-")
-        year, month, day = stamp.lstrip("-").split(" ")[0].split("-")[:3]
-        clock = stamp.split(" ")[1] if " " in stamp else "0"
-        hour = int(clock.split(":")[0] or 0)
-        year = -int(year) if negative else int(year)
-        years.append(year + (int(month) - 1) / 12 + (int(day) - 1 + hour / 24) / 360)
-    return pd.Series(years), "Time (decimal years)"
-
-
-def series_plot(times, values, about, name, where="", dated=True):
-    """A variable (or sum) through time at a cell, as (json_item, notes).
-    times are ISO strings, or the files' names when the times are not known
-    (not dated), which are then numbered."""
-    notes = []
-    values = np.asarray(values, dtype="float64")
-    if dated:
-        x, xlabel = time_axis([str(stamp) for stamp in times])
-        frame = pd.DataFrame({"time": x, name: values})
-    else:
-        xlabel = "File"
-        frame = pd.DataFrame({"time": np.arange(len(times)), "file": [str(stamp) for stamp in times], name: values})
-    missing = int(np.isnan(values).sum())
-    if missing == len(values):
-        notes.append("Every time is missing at this cell.")
-    elif missing:
-        notes.append(f"{missing} of the {len(values)} times are missing at this cell.")
-    options = dict(
-        x="time", y=name, xlabel=xlabel, ylabel=about.get("units") or name, responsive=True,
-        hover_cols=["file"] if not dated else [],
-    )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        plot = frame.hvplot.line(title=f"{_label(about, name)}{where}", tools=["hover"], **options)
-        # markers too, where they can be told apart
-        if len(frame) <= 400:
-            plot = (plot * frame.hvplot.scatter(size=12, tools=["hover"], **options)).opts(responsive=True)
-    return _render(plot), notes
+    return _render(plot), notes, [float(low), float(high)]

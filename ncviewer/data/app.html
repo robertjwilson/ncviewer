@@ -123,33 +123,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   padding: 10px 16px; border-radius: var(--radius-sm); background: var(--toast-bg); color: var(--bg); font-size: 13.5px; box-shadow: var(--shadow-lg);
 }
 .summary code { font-size: 12.5px; }
-
-/* the time series of a cell: a button that makes a click on the map ask for it, and the pop-out it is shown in */
-.series-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-.series-toggle { padding: 7px 14px; font-size: 13px; }
-.series-toggle[aria-pressed="true"] { background: var(--teal-600); border-color: var(--teal-600); color: #fff; }
-.series-toggle[aria-pressed="true"]:hover { background: var(--teal-700); border-color: var(--teal-700); }
-.series-cores { display: flex; gap: 6px; align-items: center; margin: 0; }
-.series-cores .g-label { margin: 0; }
-.series-cores .s-input { width: 64px; text-align: center; }
-.series-hint { margin: 0; color: var(--muted); font-size: 12.5px; }
-.plot.is-picking, .plot.is-picking * { cursor: crosshair; }
-.series-pop {
-  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; display: flex; flex-direction: column;
-  height: min(340px, 55%); min-height: 220px; padding: 0; overflow: hidden; box-shadow: var(--shadow-lg);
-}
-.series-pop__head { cursor: move; touch-action: none; user-select: none; display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 8px 10px 6px 14px; border-bottom: 1px solid var(--line-soft); }
-.series-pop__head h2 { margin: 0; font: 600 13px/1.3 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.series-pop__close { cursor: pointer; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
-.series-pop__close svg { width: 14px; height: 14px; }
-.series-pop__body { position: relative; flex: 1; min-height: 0; padding: 6px 10px 8px; display: flex; flex-direction: column; }
-.series-pop__plot { position: relative; flex: 1; min-height: 0; }
-.series-pop__plot > div { position: absolute; inset: 0; }
-.series-pop__reading { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 10px; padding: 16px; color: var(--muted); font-weight: 600; text-align: center; }
-.series-pop__reading .meter { width: min(320px, 80%); }
-.series-pop__reading .identify__spinner { width: 22px; height: 22px; border-width: 3px; }
-.series-pop__notes { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
-.series-pop .stage__error { margin: 8px 4px; }
 @media (max-width: 640px) { .wrap { padding: 0 16px; } .brand__word { font-size: 26px; } h1 { font-size: 17px; } }
 </style>
 <script src="bokeh.min.js"></script>
@@ -237,14 +210,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
               <span class="play-status" id="v-play-status" role="status" aria-live="polite"></span>
             </div>
           </div>
-          <div class="control" id="c-series">
-            <h2>Time series</h2>
-            <div class="series-row">
-              <button type="button" class="btn btn--ghost series-toggle" id="v-series" aria-pressed="false" title="Click the map to see the time series there">Time series</button>
-              <label class="series-cores" id="v-cores-label" title="How many processes read the files at once"><span class="g-label">Cores</span><input class="s-input is-num" id="v-cores" inputmode="numeric" spellcheck="false" autocomplete="off"><span class="g-note" id="v-cores-of"></span></label>
-            </div>
-            <p class="series-hint" id="v-series-hint" hidden>Click the map to see the time series there, at the depth shown.</p>
-          </div>
           <div class="control" id="c-level">
             <h2><label for="v-level">Depth</label></h2>
             <select class="s-select" id="v-level"></select>
@@ -270,22 +235,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           <div id="plot-b" class="is-back"></div>
           <div class="empty" id="plot-empty"><div><strong>Choose a variable</strong>Search for it on the left.</div></div>
           <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading the data</div></div>
-          <div class="card series-pop" id="series" role="dialog" aria-labelledby="series-title" hidden>
-            <div class="series-pop__head" id="series-head" title="Drag to move">
-              <h2 id="series-title">Time series</h2>
-              <button type="button" class="icon-btn series-pop__close" id="series-close" aria-label="Close the time series" title="Close (Esc)"></button>
-            </div>
-            <div class="series-pop__body">
-              <div class="series-pop__plot" id="series-plot-wrap"><div id="series-plot"></div></div>
-              <div class="series-pop__reading" id="series-reading" role="status" aria-live="polite" hidden>
-                <span class="identify__spinner" aria-hidden="true"></span>
-                <span id="series-reading-text">Finding the cell</span>
-                <div class="meter" aria-hidden="true"><span id="series-meter"></span></div>
-              </div>
-              <p class="stage__error" id="series-error" role="alert" hidden></p>
-              <p class="series-pop__notes" id="series-notes" hidden></p>
-            </div>
-          </div>
         </div>
         <p class="stage__error" id="plot-error" role="alert" hidden></p>
       </section>
@@ -513,7 +462,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     }
   }
   $("continue").addEventListener("click", goOn);
-  $("back").addEventListener("click", async () => { stopPlay(); setSeriesMode(false); await post("api/back"); });
+  $("back").addEventListener("click", async () => { stopPlay(); await post("api/back"); });
 
   function showError(text) {
     const banner = $("files-error");
@@ -780,7 +729,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       $("v-level").replaceChildren(...options);
       $("v-level").value = String(pick.level);
     }
-    renderSeriesControl(usesTime, stream);
     $("v-cmap").value = pick.cmap;
     $("v-vmin").value = pick.vmin;
     $("v-vmax").value = pick.vmax;
@@ -962,7 +910,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (!now) return;
     lastClim = reply.clim || null;
     await draw(reply.item);
-    drawnFrame = reply.frame || "lonlat";
     pick.step = step;
     updateTime(now);
   }
@@ -995,141 +942,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   $("v-log").addEventListener("change", (event) => { pick.log = event.target.checked; requestPlot(0); });
   $("v-coast").addEventListener("change", (event) => { pick.coast = event.target.checked; requestPlot(0); });
 
-  // ---- the time series of a cell ----
-  // With Time series on, a click on the map (told by the map's figure as an ncviewer-tap event) asks ncviewer
-  // for the time series of the cell there, which is read in a job (in a pool of processes, of the cores
-  // chosen, when the file type has many files) and shown, once read, in the pop-out over the map. A new click
-  // replaces it; closing it stops the job.
-  const series = { on: false, number: 0, cores: String(state.cores || 1), views: [] };
-  // more files than this, and the pop-out counts them as they are read
-  const SERIES_COUNT_FROM = 6;
-  // what the x and y of the map on show are, for the cell a click is at: "lonlat", "mercator" or "index"
-  let drawnFrame = "lonlat";
-  $("series-close").innerHTML = GUI.ICONS.cross;
-
-  const coresOk = (text) => /^\d+$/.test(text.trim()) && Number(text) >= 1 && Number(text) <= (state.max_cores || 1);
-  function renderSeriesControl(usesTime, stream) {
-    $("c-series").hidden = !usesTime;
-    if (!usesTime && series.on) setSeriesMode(false);
-    // the cores matter only where the files are read in a pool of processes
-    $("v-cores-label").hidden = !(stream.files >= (state.parallel_from || 40) && (state.max_cores || 1) > 1);
-    $("v-cores").value = series.cores;
-    $("v-cores-of").textContent = `of ${state.max_cores || 1}`;
-  }
-  function setSeriesMode(on) {
-    series.on = on;
-    $("v-series").setAttribute("aria-pressed", String(on));
-    $("v-series-hint").hidden = !on;
-    $("plot-wrap").classList.toggle("is-picking", on);
-    if (!on) closeSeries();
-  }
-  $("v-series").addEventListener("click", () => setSeriesMode(!series.on));
-  $("v-cores").addEventListener("input", (event) => {
-    series.cores = event.target.value.trim();
-    event.target.classList.toggle("is-invalid", !coresOk(series.cores));
-  });
-
-  function releaseSeries() {
-    for (const view of series.views) { try { view.remove(); } catch (error) { /* already gone */ } }
-    series.views = [];
-    $("series-plot").replaceChildren();
-  }
-  function seriesShows({ reading = null, share = null, error = null, notes = [] } = {}) {
-    $("series-reading").hidden = reading === null;
-    if (reading !== null) $("series-reading-text").textContent = reading;
-    $("series-meter").parentElement.hidden = share === null;
-    $("series-meter").style.width = `${share || 0}%`;
-    $("series-error").hidden = !error;
-    $("series-error").textContent = error || "";
-    $("series-notes").hidden = !notes.length;
-    $("series-notes").textContent = notes.join(" ");
-  }
-  function closeSeries() {
-    if ($("series").hidden) return;
-    series.number += 1;
-    $("series").hidden = true;
-    releaseSeries();
-    post("api/series_stop");
-  }
-  $("series-close").addEventListener("click", closeSeries);
-  // the pop-out can be moved by its head, off the part of the map to be clicked; it stays inside the map's box
-  $("series-head").addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest("button")) return;
-    const pop = $("series"), wrap = $("plot-wrap").getBoundingClientRect(), box = pop.getBoundingClientRect();
-    const dx = event.clientX - box.left, dy = event.clientY - box.top;
-    $("series-head").setPointerCapture(event.pointerId);
-    const move = (moved) => {
-      const left = Math.min(Math.max(0, moved.clientX - dx - wrap.left), wrap.width - box.width);
-      const top = Math.min(Math.max(0, moved.clientY - dy - wrap.top), wrap.height - box.height);
-      Object.assign(pop.style, { left: `${left}px`, top: `${top}px`, right: "auto", bottom: "auto", width: `${box.width}px` });
-    };
-    const stop = () => {
-      $("series-head").removeEventListener("pointermove", move);
-      $("series-head").removeEventListener("pointerup", stop);
-      $("series-head").removeEventListener("pointercancel", stop);
-    };
-    $("series-head").addEventListener("pointermove", move);
-    $("series-head").addEventListener("pointerup", stop);
-    $("series-head").addEventListener("pointercancel", stop);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !$("series").hidden && !GUI.choicesOpen()) closeSeries();
-  });
-
-  document.addEventListener("ncviewer-tap", (event) => {
-    if (!series.on || state.view !== "viewer" || !inStream()) return;
-    askSeries(event.detail.x, event.detail.y);
-  });
-
-  async function askSeries(x, y) {
-    const number = ++series.number;
-    releaseSeries();
-    $("series-title").textContent = `Time series of ${pick.names.join(" + ")}`;
-    $("series").hidden = false;
-    if (!coresOk(series.cores)) {
-      seriesShows({ error: `Cores is a whole number from 1 to ${state.max_cores || 1}.` });
-      return;
-    }
-    seriesShows({ reading: "Finding the cell" });
-    const reply = await post("api/series", {
-      stream: String(pick.stream), vars: JSON.stringify(pick.names), step: String(pick.step), level: String(pick.level),
-      x, y, frame: drawnFrame, cores: series.cores,
-    });
-    if (number !== series.number) return;
-    if (!reply.ok) { seriesShows({ error: reply.error || "The time series could not be read." }); return; }
-    for (;;) {
-      let status;
-      try {
-        status = await (await fetch(`api/series?${query({ job: String(reply.job) })}`, { cache: "no-store" })).json();
-      } catch (error) {
-        status = { ok: false, finished: true, error: "ncviewer is no longer running." };
-      }
-      if (number !== series.number) return;
-      if (!status.ok) { seriesShows({ error: status.error || "The time series could not be read." }); return; }
-      if (status.finished) {
-        seriesShows({ notes: status.notes || [] });
-        await drawSeries(status.item, number);
-        return;
-      }
-      // a count of the files read, once there are enough for it to take a while
-      const counted = status.total > SERIES_COUNT_FROM;
-      seriesShows({
-        reading: counted ? `Reading the files: ${status.done}/${status.total} files read` : "Reading the files",
-        share: counted ? Math.round((100 * status.done) / status.total) : null,
-      });
-      await sleep(250);
-    }
-  }
-
-  async function drawSeries(item, number) {
-    if (!window.Bokeh) { seriesShows({ error: "Bokeh could not be loaded, so nothing can be drawn." }); return; }
-    const made = await Bokeh.embed.embed_item(item, "series-plot");
-    const views = Array.from(made.roots || made);
-    // closed, or another point clicked, while it was drawn
-    if (number !== series.number) { for (const view of views) { try { view.remove(); } catch (error) { /* gone */ } } return; }
-    series.views = views;
-  }
-
   // ---- the plots ----
   let plotNumber = 0;
   let plotTimer = null;
@@ -1152,7 +964,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 
   function clearPlot() {
     stopPlay();
-    closeSeries();
     plotNumber++;
     disposeFigures();
     $("plot-empty").hidden = false;
@@ -1183,7 +994,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       lastClim = reply.clim || null;
       await draw(reply.item);
       if (number !== plotNumber) return;
-      drawnFrame = reply.frame || "lonlat";
       $("plot-empty").hidden = true;
       const now = inStream();
       if (now) renderControls(now);
