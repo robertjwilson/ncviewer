@@ -91,7 +91,8 @@ def test_probe_then_view(running, simulation):
     assert summed["ok"] and any("units differ (degC, mg m-3)" in note for note in summed["notes"])
     single = _get(base, "api/plot", token=token, stream=1, vars='["chl"]', step=3, level=1)
     assert summed["clim"][0] > single["clim"][1] and "units differ" not in " ".join(single["notes"])
-    assert "Chlorophyll + Temperature" in str(summed["item"])
+    # the figure names the sum by its hover, not a title
+    assert "chl + votemper" in str(summed["item"])
     # what cannot be added is said in words, not as an exception
     refused = _get(base, "api/plot", token=token, stream=0, vars='["votemper", "sossheig"]')
     assert refused == {"ok": False, "error": "votemper and sossheig have different dimensions, so they cannot be added."}

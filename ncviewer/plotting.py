@@ -108,11 +108,6 @@ def _render(plot):
     return json_item(figure)
 
 
-def _label(about, name):
-    words = about.get("long_name") or name
-    return f"{words} ({about['units']})" if about.get("units") else words
-
-
 def colour_limits(values, vmin=None, vmax=None, log=False):
     """The colour scale's limits, and whether it is symmetric about 0: the
     limits given, or the values' range, made symmetric about 0 when it spans
@@ -193,7 +188,7 @@ def mesh_image(data, about, mesh):
     return drawn, about, note
 
 
-def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=False, coast=False, mesh=None):
+def map_plot(data, about, name, cmap=None, vmin=None, vmax=None, log=False, coast=False, mesh=None):
     """The map of a 2-D slice (see Catalogue.field), as (json_item, notes,
     the colour scale's limits). A slice of a variable on an FVCOM mesh is
     drawn as an image of the mesh (mesh_image), and needs its mesh."""
@@ -243,9 +238,10 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
     if log:
         low = max(low, np.nanmin(np.where(data.values > 0, data.values, np.nan)))
     colour = cmap or ("RdBu_r" if symmetric else "viridis")
-    title = _label(about, name) + (f", {when}" if when else "")
+    # no title (an empty one: holoviews would make one from the slice's time or level): what it said is on
+    # the page (the variable, the time) and the colour bar (the units)
     options = dict(
-        x=x, y=y, cmap=colour, clim=(low, high), logz=log, title=title,
+        x=x, y=y, cmap=colour, clim=(low, high), logz=log, title="",
         tools=["hover"], responsive=True, colorbar=True, clabel=about.get("units") or None,
     )
     cartesian = about.get("cartesian", False)

@@ -236,7 +236,7 @@ class App:
             data, when = found.field(stream, names, step, level, self.missing)
             n_missing = data.attrs.get("n_missing", 0)
             item, notes, clim = plotting.map_plot(
-                data, about, name, when,
+                data, about, name,
                 cmap=query.get("cmap") or None,
                 vmin=_number(query.get("vmin")),
                 vmax=_number(query.get("vmax")),

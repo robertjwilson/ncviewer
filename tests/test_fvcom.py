@@ -104,8 +104,8 @@ def test_a_mesh_in_metres(tmp_path):
     try:
         mesh = found.mesh(0)
         assert mesh.cartesian and mesh.x.max() == pytest.approx(70000)
-        data, when = found.field(0, ["temp"], 0, 0)
-        item, notes, clim = plotting.map_plot(data, found.combined(0, ["temp"]), "temp", when, coast=True, mesh=mesh)
+        data, _ = found.field(0, ["temp"], 0, 0)
+        item, notes, clim = plotting.map_plot(data, found.combined(0, ["temp"]), "temp", coast=True, mesh=mesh)
         assert "x (m)" in str(item)
         # Natural Earth's coastline cannot be placed on metres
         assert any("no coastline" in note for note in notes)
@@ -157,8 +157,8 @@ def _lines(item):
 
 
 def _temp_map(found, **options):
-    data, when = found.field(0, ["temp"], 0, 0)
-    return plotting.map_plot(data, found.combined(0, ["temp"]), "temp", when, mesh=found.mesh(0), **options)
+    data, _ = found.field(0, ["temp"], 0, 0)
+    return plotting.map_plot(data, found.combined(0, ["temp"]), "temp", mesh=found.mesh(0), **options)
 
 
 def test_the_coastline_on_a_mesh(found, monkeypatch):

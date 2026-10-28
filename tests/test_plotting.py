@@ -8,6 +8,11 @@ from simulations import regular_file
 from ncviewer import catalogue, plotting
 
 
+def _titles(item):
+    """The text of each title a json_item's figures have."""
+    return re.findall(r"'name': 'Title', 'id': '[a-z0-9]+', 'attributes': \{'text': '([^']*)'", str(item))
+
+
 def _kinds(item):
     """The kinds of glyph a json_item draws (a quadmesh of a curvilinear grid
     is drawn as Patches, one of a rectilinear one as Quads)."""
@@ -24,8 +29,8 @@ def found(simulation):
 
 
 def test_curvilinear_land_at_zero_is_drawn_by_index(found):
-    data, when = found.field(0, "votemper", 0, 0)
-    item, notes, clim = plotting.map_plot(data, found.about(0, "votemper"), "votemper", when)
+    data, _ = found.field(0, "votemper", 0, 0)
+    item, notes, clim = plotting.map_plot(data, found.about(0, "votemper"), "votemper")
     assert "Image" in _kinds(item)
     assert any("indices" in note for note in notes)
     assert clim[0] < clim[1]
@@ -46,9 +51,11 @@ def test_curvilinear_grid_is_a_quadmesh():
 def test_regular_grid_is_an_image(tmp_path):
     regular_file(str(tmp_path / "r.nc"))
     found = catalogue.scan(str(tmp_path), 0)
-    data, when = found.field(0, "sst", 1)
-    item, notes, clim = plotting.map_plot(data, found.about(0, "sst"), "sst", when)
+    data, _ = found.field(0, "sst", 1)
+    item, notes, clim = plotting.map_plot(data, found.about(0, "sst"), "sst")
     assert notes == []
+    # the map has no title: the page and the colour bar say what it is
+    assert _titles(item) == []
     assert "Image" in _kinds(item)
 
 
