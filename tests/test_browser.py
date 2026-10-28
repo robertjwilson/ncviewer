@@ -97,6 +97,9 @@ def test_viewer(page, simulation):
     tab.click("#v-streams label.ptr-mode >> nth=1")
     tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    # the calendar is not shown
+    assert "Calendar" not in tab.text_content("#v-info")
+    assert "Times" in tab.text_content("#v-info")
     # nothing is written under the map
     assert tab.locator("#plot-notes, .stage__notes").count() == 0
     # the map fills its box, not a strip of axes

@@ -659,7 +659,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       if (stream.has_times) {
         info.push(["Times", `${stream.steps}${stream.resolution ? `, ${stream.resolution}` : ""}`]);
         info.push(["From", stream.first, true], ["To", stream.last, true]);
-        if (stream.calendar) info.push(["Calendar", stream.calendar]);
       }
     }
     $("v-info").replaceChildren(...info.filter(([, value]) => value).flatMap(([key, value, mono]) => [

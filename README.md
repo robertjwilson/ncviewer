@@ -71,7 +71,7 @@ changed files.
   values are applied to each variable first, and a cell that is missing in any of them is
   missing in the sum. If the units differ, the sum is still drawn, so check they make sense added. Below
   that is what the variable is (its
-  dimensions, files, times and calendar), followed by the controls:
+  dimensions, files and times), followed by the controls:
   - **Time**: a slider, the arrow buttons (or the arrow keys), and Play.
   - **Depth**: the level to show.
   - **Colours**: the colour map, fixed limits ("Keep this scale for every time"), a
