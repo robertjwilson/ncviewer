@@ -272,7 +272,7 @@ def test_fvcom_output(page, tmp_path, monkeypatch):
     tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
     # pyfvcom2, whose way the mesh is drawn, is credited at the bottom right
     credit = tab.locator("#fvcom-credit")
-    assert credit.is_visible() and credit.text_content() == "Plotting based on pyfvcom2"
+    assert credit.is_visible() and credit.text_content() == "Plotting is influenced by pyfvcom2"
     assert credit.get_attribute("href") == "https://github.com/PlymouthMarineLaboratory/pyfvcom2"
     tab.fill("#v-search", "temperature")
     tab.keyboard.press("Enter")
