@@ -50,7 +50,7 @@ and so does Ctrl+C.
   missing in the files, such as 0 or -999. Add one number, or fill in To as well for a
   range (both ends are included). Cells with these values are set to missing for every
   variable, before the map is drawn, so they are left blank and do not stretch the colour
-  scale. The viewer says how many cells were set to missing. Go Back to change them.
+  scale. Go Back to change them.
 
 ncviewer counts the files as you type. **Continue** reads the times of every file (only
 the time variable is read) and the variables of the first file of each file type. Files
@@ -69,7 +69,7 @@ changed files.
   file type and have the same dimensions, so a variable that cannot be added to those
   ticked is dimmed. The sum is made in xarray before the map is drawn: your missing
   values are applied to each variable first, and a cell that is missing in any of them is
-  missing in the sum. If the units differ, the sum is drawn and the page says so. Below
+  missing in the sum. If the units differ, the sum is still drawn, so check they make sense added. Below
   that is what the variable is (its
   dimensions, files, times and calendar), followed by the controls:
   - **Time**: a slider, the arrow buttons (or the arrow keys), and Play.

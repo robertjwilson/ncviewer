@@ -97,14 +97,13 @@ def test_viewer(page, simulation):
     tab.click("#v-streams label.ptr-mode >> nth=1")
     tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
-    assert "ptrc_T" in tab.text_content("#plot-notes")
-    assert "set to missing" in tab.text_content("#plot-notes")
+    # nothing is written under the map
+    assert tab.locator("#plot-notes, .stage__notes").count() == 0
     # the map fills its box, not a strip of axes
     assert tab.locator("#plot .bk-Figure, #plot > div").first.bounding_box()["height"] > 300
     tab.click("#v-next")
     tab.wait_for_function("() => document.querySelector('#v-when').textContent.startsWith('2000-02')")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
-    assert "2000/02/" in tab.text_content("#plot-notes")
     # a deeper level is drawn too
     tab.select_option("#v-level", "3")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
@@ -134,7 +133,6 @@ def test_sum_of_variables(page, simulation):
     tab.wait_for_function("() => document.querySelector('#v-info').textContent.includes('Sum of')")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert "chl (mg m-3) + votemper (degC)" in tab.text_content("#v-info")
-    assert "units differ" in tab.text_content("#plot-notes")
     assert tab.is_hidden("#plot-error")
     # the file type is not asked: only one holds both
     assert tab.is_hidden("#v-streams")

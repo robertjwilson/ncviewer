@@ -111,8 +111,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .busy__box .identify__spinner { width: 22px; height: 22px; border-width: 3px; }
 .empty { display: grid; place-items: center; height: 100%; min-height: 420px; color: var(--muted); text-align: center; padding: 20px; }
 .empty strong { display: block; color: var(--ink); font: 600 18px/1.3 var(--font-head); margin-bottom: 6px; }
-.stage__notes { margin: 8px 0 0; display: grid; gap: 2px; color: var(--muted); font-size: 12.5px; }
-.stage__notes .is-warn { color: var(--coral-dark); }
 .stage__error { margin: 8px 0 0; color: var(--red); font-weight: 600; font-size: 13px; }
 .toast {
   position: fixed; left: 50%; bottom: 84px; z-index: 50; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
@@ -227,7 +225,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading the data</div></div>
         </div>
         <p class="stage__error" id="plot-error" role="alert" hidden></p>
-        <div class="stage__notes" id="plot-notes"></div>
       </section>
     </div>
   </section>
@@ -803,7 +800,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("plot-empty").hidden = false;
     $("plot-busy").hidden = true;
     $("plot-error").hidden = true;
-    $("plot-notes").replaceChildren();
     if (catalogue && pick.names.length && pick.stream === null) {
       $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose the file type" }), "They are in more than one: say which on the left."));
     } else {
@@ -834,10 +830,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       lastClim = reply.clim || null;
       await draw("plot", reply.item);
       $("plot-empty").hidden = true;
-      const notes = (reply.notes || []).map((text) => el("span", { class: "is-warn", text }));
-      if (reply.n_missing) notes.push(el("span", { text: `${plural(reply.n_missing, "cell")} set to missing by the missing values.` }));
-      if (reply.file) notes.push(el("span", {}, "File: ", el("code", { text: reply.file })));
-      $("plot-notes").replaceChildren(...notes);
       const now = inStream();
       if (now) renderControls(now);
       if (playing) setTimeout(playOn, 250);
