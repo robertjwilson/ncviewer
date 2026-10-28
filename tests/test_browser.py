@@ -1,5 +1,5 @@
 """The window in a browser: page 1 fills in the directories down from the
-folders' layout, Continue reads the files, and the viewer plots a variable
+folders' layout, Continue reads the files, and the viewer maps a variable
 once its file type is chosen. Skipped where Chromium is not installed."""
 
 import pytest
@@ -54,18 +54,17 @@ def test_viewer(page, simulation):
     tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert "ptrc_T" in tab.text_content("#plot-notes")
+    # the map fills its box, not a strip of axes
+    assert tab.locator("#plot .bk-Figure, #plot > div").first.bounding_box()["height"] > 300
     tab.click("#v-next")
     tab.wait_for_function("() => document.querySelector('#v-when').textContent.startsWith('2000-02')")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert "2000/02/" in tab.text_content("#plot-notes")
-    # a click on the map shows the variable through time there
-    box = tab.locator("#plot").bounding_box()
-    tab.mouse.click(box["x"] + box["width"] * 0.45, box["y"] + box["height"] * 0.5)
-    tab.wait_for_selector("#point:not([hidden]) #point-plot [class^=bk]", timeout=30000)
-    assert "cell" in tab.text_content("#v-cell")
-    tab.click("#v-kind button:has-text('Depth against time')")
-    tab.wait_for_selector("#point[hidden]", state="attached")
+    # a deeper level is drawn too
+    tab.select_option("#v-level", "3")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert tab.is_hidden("#plot-error")
+    # nothing but the map: no other plots to choose
+    assert tab.locator("#v-kind, #point, #c-cell").count() == 0
     tab.click("#back")
     tab.wait_for_selector("#view-files:not([hidden])")

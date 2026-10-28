@@ -100,8 +100,6 @@ class App:
         self.closed = threading.Event()
         self.url = None
         self._server = None
-        # page -> the number of its latest request for a plot (an earlier one still reading is stopped)
-        self._plot_numbers = {}
 
     # ---- the state the page follows ----
 
@@ -211,86 +209,36 @@ class App:
             return {"ok": False, "error": "Nothing has been read yet."}
         return {"ok": True, "number": self.catalogue_number, **self.catalogue.summary()}
 
-    def plot(self, query, page=""):
-        """A plot, as the page asks for it: {"ok", "item" (a Bokeh json_item),
-        "notes", and where it is ("cell", "position", "when", "file")}."""
-        from . import catalogue, plotting
+    def plot(self, query):
+        """The map the page asks for: {"ok", "item" (a Bokeh json_item),
+        "notes", "clim" (the colour scale's limits), "when", "file"}."""
+        from . import plotting
 
         found = self.catalogue
         if found is None:
             return {"ok": False, "error": "Nothing has been read yet."}
-        number = self._plot_numbers[page] = self._plot_numbers.get(page, 0) + 1
-
-        def stopped():
-            return self._plot_numbers.get(page) != number or self.catalogue is not found
-
-        kind = query.get("kind", "map")
         stream, name = query.get("stream", "0"), query.get("var", "")
         step, level = int(query.get("step") or 0), int(query.get("level") or 0)
-        colour = {
-            "cmap": query.get("cmap") or None,
-            "vmin": _number(query.get("vmin")),
-            "vmax": _number(query.get("vmax")),
-            "log": query.get("log") == "1",
-        }
         try:
             about = found.about(stream, name)
-            cell = [int(part) for part in query["cell"].split(",")] if query.get("cell") else None
-            reply = {"ok": True, "kind": kind, "notes": []}
-            if kind in ("series", "profile", "hovmoller") and cell is None:
-                cell = _middle(about)
-                reply["notes"].append("Click on the map to choose the cell. The middle of the grid is shown.")
-            if cell is not None:
-                reply["cell"] = cell
-                reply["position"] = found.cell_position(stream, name, cell)
-            where = _where(about, cell, reply.get("position"))
-            if kind == "map":
-                data, when = found.field(stream, name, step, level)
-                reply["item"], notes, reply["clim"], reply["axes"] = plotting.map_plot(data, about, name, when, coast=query.get("coast") == "1", **colour)
-                reply["notes"] += notes
-                reply["when"] = when
-            elif kind == "line":
-                data, when = found.field(stream, name, step, level)
-                reply["item"] = plotting.line_plot(data, about, name, when)
-                reply["when"] = when
-            elif kind == "series":
-                times, values = found.series(stream, name, cell, level, stopped=stopped)
-                if about["vertical"]:
-                    where += f", {_level_text(about, level)}"
-                reply["item"] = plotting.series_plot(times, values, about, name, where)
-            elif kind == "profile":
-                levels, values, when = found.profile(stream, name, cell, step)
-                reply["item"] = plotting.profile_plot(levels, values, about, name, where, when)
-                reply["when"] = when
-            elif kind == "hovmoller":
-                times, values = found.series(stream, name, cell, all_levels=True, stopped=stopped)
-                reply["item"] = plotting.hovmoller_plot(times, values, about, name, where, **colour)
-            else:
-                return {"ok": False, "error": f"There is no plot called {kind}."}
-            if kind in ("map", "line", "profile"):
-                record = found.streams[int(stream)]
-                _, index, _ = record["steps"][min(max(step, 0), len(record["steps"]) - 1)]
-                reply["file"] = os.path.relpath(record["files"][index], found.simdir)
-            return reply
-        except catalogue.Stopped:
-            return {"ok": False, "stopped": True}
+            data, when = found.field(stream, name, step, level)
+            item, notes, clim = plotting.map_plot(
+                data, about, name, when,
+                cmap=query.get("cmap") or None,
+                vmin=_number(query.get("vmin")),
+                vmax=_number(query.get("vmax")),
+                log=query.get("log") == "1",
+                coast=query.get("coast") == "1",
+            )
+            record = found.streams[int(stream)]
+            _, index, _ = record["steps"][min(max(step, 0), len(record["steps"]) - 1)]
+            return {
+                "ok": True, "item": item, "notes": notes, "clim": clim, "when": when,
+                "file": os.path.relpath(record["files"][index], found.simdir),
+            }
         except Exception as error:  # noqa: BLE001 - told to the page
             traceback.print_exc()
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
-
-    def cell_at(self, query):
-        """The cell nearest a click on the map, and where it is."""
-        found = self.catalogue
-        if found is None:
-            return {"ok": False, "error": "Nothing has been read yet."}
-        try:
-            stream, name = query.get("stream", "0"), query.get("var", "")
-            cell = found.nearest_cell(
-                stream, name, float(query["x"]), float(query["y"]), by_index=query.get("axes") == "index"
-            )
-            return {"ok": True, "cell": cell, "position": found.cell_position(stream, name, cell)}
-        except Exception as error:  # noqa: BLE001
-            return {"ok": False, "error": str(error)}
 
     # ---- pages coming and going ----
 
@@ -356,27 +304,6 @@ def _number(text):
         return float(text) if text not in (None, "") else None
     except ValueError:
         return None
-
-
-def _middle(about):
-    return [size // 2 for dim, size in zip(about["dims"], about["shape"]) if dim in about["horizontal"]]
-
-
-def _level_text(about, level):
-    values = about.get("level_values") or []
-    level = min(max(int(level), 0), len(values) - 1) if values else 0
-    value = values[level] if values else level
-    units = f" {about['level_units']}" if about.get("level_units") else ""
-    return f"{about['vertical']} {value:g}{units}" if isinstance(value, float) else f"level {value}"
-
-
-def _where(about, cell, position):
-    if cell is None:
-        return ""
-    if position:
-        lon, lat = position
-        return f", at {abs(lon):.3f}°{'W' if lon < 0 else 'E'} {abs(lat):.3f}°{'S' if lat < 0 else 'N'}"
-    return ", at cell " + ", ".join(f"{dim}={index}" for dim, index in zip(about["horizontal"], cell))
 
 
 # ---- the server (as OceanVal's recipes_gui._Server/_Handler) ----
@@ -450,9 +377,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/catalogue":
             self._reply_json(app.summary())
         elif url.path == "/api/plot":
-            self._reply_json(app.plot(query, page))
-        elif url.path == "/api/cell":
-            self._reply_json(app.cell_at(query))
+            self._reply_json(app.plot(query))
         else:
             self._reply(404, b"Not found", "text/plain")
 

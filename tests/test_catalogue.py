@@ -1,6 +1,5 @@
 import os
 
-import numpy as np
 import pytest
 from simulations import nemo_simulation, regular_file
 
@@ -26,8 +25,6 @@ def test_streams_and_variables(found):
     temperature = variables["votemper"]["streams"][0]
     assert temperature["levels"] == 4
     assert temperature["level_values"] == [1.0, 5.0, 20.0, 50.0]
-    assert temperature["kinds"] == ["map", "series", "profile", "hovmoller"]
-    assert variables["sossheig"]["streams"][0]["kinds"] == ["map", "series"]
     assert variables["chl"]["long_name"] == "Chlorophyll"
 
 
@@ -89,38 +86,26 @@ def test_no_files(tmp_path):
         catalogue.scan(str(tmp_path), 0)
 
 
-def test_field_series_profile(found):
+def test_field(found):
     data, when = found.field(0, "votemper", step=5, level=1)
     assert data.dims == ("y", "x")
     assert when == "2000-06-16 00:00:00"
     assert "nav_lon" in data.coords
-    cell = found.nearest_cell(0, "votemper", -8.25, 50.06)
-    assert cell == [5, 3]
-    assert found.cell_position(0, "votemper", cell) == pytest.approx([-8.25, 50.06], abs=1e-4)
-    stamps, values = found.series(0, "votemper", cell, level=0)
-    assert len(stamps) == len(values) == 24
-    assert values[1] - values[0] == pytest.approx(1.0)
-    levels, profile, when = found.profile(0, "votemper", cell, step=3)
-    assert levels == [1.0, 5.0, 20.0, 50.0]
-    assert profile == sorted(profile, reverse=True)
-    stamps, grid = found.series(0, "votemper", cell, all_levels=True)
-    assert np.shape(grid) == (24, 4)
-
-
-def test_nearest_cell_by_index(found):
-    assert found.nearest_cell(0, "votemper", 3.2, 6.7, by_index=True) == [7, 3]
-    assert found.nearest_cell(0, "votemper", 99, -5, by_index=True) == [0, 9]
+    # a later month is warmer, a deeper level colder
+    assert float(found.field(0, "votemper", 6, 1)[0].mean()) > float(data.mean())
+    assert float(found.field(0, "votemper", 5, 3)[0].mean()) < float(data.mean())
+    # a variable with no levels takes none
+    data, when = found.field(0, "sossheig", step=2, level=3)
+    assert data.dims == ("y", "x") and when == "2000-03-16 12:00:00"
 
 
 def test_regular_grid(tmp_path):
     regular_file(str(tmp_path / "r.nc"))
     found = catalogue.scan(str(tmp_path), 0)
-    variables = found.summary()["variables"]
-    assert variables["sst"]["streams"][0]["kinds"] == ["map", "series"]
-    assert variables["station_temp"]["streams"][0]["kinds"] == ["series"]
-    assert found.nearest_cell(0, "sst", 0, 50) == [10, 20]
-    stamps, values = found.series(0, "station_temp", [])
-    assert len(values) == 3
+    # only what can be mapped is listed: not a series with no horizontal dimensions
+    assert list(found.summary()["variables"]) == ["sst"]
+    data, when = found.field(0, "sst", 1)
+    assert data.dims == ("lat", "lon")
 
 
 def test_resolution():

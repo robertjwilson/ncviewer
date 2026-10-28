@@ -64,15 +64,16 @@ def test_probe_then_view(running, simulation):
     _wait_for(app, "viewer")
     summary = _get(base, "api/catalogue", token=token)
     assert summary["files"] == 48
-    reply = _get(base, "api/plot", token=token, kind="map", stream=0, var="votemper", step=3, level=1)
-    assert reply["ok"] and reply["axes"] == "index" and reply["file"].startswith("2000/04/")
-    cell = _get(base, "api/cell", token=token, stream=0, var="votemper", x=4.2, y=6.6, axes="index")
-    assert cell["cell"] == [7, 4]
-    reply = _get(base, "api/plot", token=token, kind="series", stream=0, var="votemper", cell="7,4")
-    assert reply["ok"] and reply["cell"] == [7, 4]
-    reply = _get(base, "api/plot", token=token, kind="hovmoller", stream=0, var="votemper")
-    assert reply["ok"] and reply["cell"] == [6, 5]
-    assert _get(base, "api/plot", token=token, kind="map", stream=0, var="nothing")["ok"] is False
+    reply = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    assert reply["ok"] and reply["file"].startswith("2000/04/")
+    assert reply["when"] == "2000-04-16 00:00:00"
+    assert reply["clim"][0] < reply["clim"][1]
+    reply = _get(base, "api/plot", token=token, stream=0, var="votemper", vmin=0, vmax=30)
+    assert reply["clim"] == [0, 30]
+    assert _get(base, "api/plot", token=token, stream=0, var="nothing")["ok"] is False
+    # only maps are drawn: there is no asking for a cell
+    with pytest.raises(urllib.error.HTTPError):
+        _get(base, "api/cell", token=token, stream=0, var="votemper", x=1, y=1)
     _post(base, "api/back", token, {})
     assert app.view == "files"
 

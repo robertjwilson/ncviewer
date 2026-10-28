@@ -69,14 +69,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .ptr-mode { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 13px; }
 .ptr-mode small { display: block; color: var(--muted); font-weight: 500; }
 .ptr-mode code { font-size: 12px; overflow-wrap: anywhere; }
-.segmented { display: flex; flex-wrap: wrap; gap: 6px; }
-.segmented button {
-  padding: 6px 10px; border: 2px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--ink-soft);
-  font: 600 12.5px/1 var(--font-body); cursor: pointer;
-}
-.segmented button:hover { border-color: var(--teal-200); }
-.segmented button[aria-pressed="true"] { border-color: var(--teal-600); background: var(--teal-600); color: #fff; font-weight: 700; }
-.segmented button:focus-visible { outline: none; box-shadow: var(--focus); }
 .control { display: grid; gap: 6px; }
 .time-row { display: flex; gap: 6px; align-items: center; }
 .time-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--teal-600); }
@@ -85,8 +77,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .icon-btn[aria-pressed="true"] { background: var(--teal-600); border-color: var(--teal-600); color: #fff; }
 .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .time-label { font: 500 13px/1.3 var(--font-mono); color: var(--ink); }
-.cell-text { margin: 0; font-size: 13px; }
-.cell-text.is-none { color: var(--muted); }
 .colour-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .colour-grid .is-wide { grid-column: 1 / -1; }
 .scale-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
@@ -95,13 +85,10 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .tick-label.is-off { color: var(--muted-light); cursor: not-allowed; }
 
 .stage { display: flex; flex-direction: column; min-height: calc(100vh - 170px); padding: 12px; }
-.stage__plots { position: relative; display: grid; grid-template-rows: minmax(420px, 1fr) auto; gap: 12px; flex: 1; }
-.plot { position: relative; min-height: 420px; height: 100%; }
-.plot > div { width: 100%; height: 100%; }
-.point { position: relative; height: 280px; border-top: 1px solid var(--line); padding-top: 8px; }
-.point__close { position: absolute; top: 4px; right: 44px; z-index: 3; height: 28px; }
-.point__plot { width: 100%; height: 100%; }
-.point__plot > div { width: 100%; height: 100%; }
+/* a flex row, so the map (a Bokeh figure that fills its box) is given the stage's height */
+.plot { position: relative; flex: 1; min-height: 420px; display: flex; }
+#plot { flex: 1; min-width: 0; }
+#plot > div { width: 100%; height: 100%; }
 .busy { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: var(--overlay); border-radius: var(--radius-sm); }
 .busy__box { display: flex; gap: 10px; align-items: center; color: var(--muted); font-weight: 600; }
 .busy__box .identify__spinner { width: 22px; height: 22px; border-width: 3px; }
@@ -180,10 +167,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
         </div>
         <div id="v-streams" class="streams" hidden></div>
         <div id="v-controls" class="streams" hidden>
-          <div class="control">
-            <h2>Plot</h2>
-            <div class="segmented" id="v-kind" role="group" aria-label="Plot"></div>
-          </div>
           <div class="control" id="c-time">
             <h2><label for="v-step">Time</label></h2>
             <div class="time-row">
@@ -197,10 +180,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           <div class="control" id="c-level">
             <h2><label for="v-level">Depth</label></h2>
             <select class="s-select" id="v-level"></select>
-          </div>
-          <div class="control" id="c-cell">
-            <h2>Point</h2>
-            <p class="cell-text" id="v-cell"></p>
           </div>
           <div class="control" id="c-colour">
             <h2>Colours</h2>
@@ -217,18 +196,11 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           </div>
         </div>
       </aside>
-      <section class="stage card" aria-label="Plot">
-        <div class="stage__plots">
-          <div class="plot" id="plot-wrap">
-            <div id="plot"></div>
-            <div class="empty" id="plot-empty"><div><strong>Choose a variable</strong>Search for it on the left.</div></div>
-            <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span><span id="plot-busy-text">Reading the data</span></div></div>
-          </div>
-          <div class="point" id="point" hidden>
-            <button type="button" class="btn btn--text point__close" id="point-close">Close</button>
-            <div class="point__plot" id="point-plot"></div>
-            <div class="busy" id="point-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading every file at this point</div></div>
-          </div>
+      <section class="stage card" aria-label="Map">
+        <div class="plot" id="plot-wrap">
+          <div id="plot"></div>
+          <div class="empty" id="plot-empty"><div><strong>Choose a variable</strong>Search for it on the left.</div></div>
+          <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading the data</div></div>
         </div>
         <p class="stage__error" id="plot-error" role="alert" hidden></p>
         <div class="stage__notes" id="plot-notes"></div>
@@ -463,14 +435,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   let catalogue = null;
   let catalogueNumber = null;
   const COLOUR_MAPS = ["", "viridis", "cividis", "plasma", "inferno", "magma", "turbo", "RdBu_r", "coolwarm", "Blues", "YlGnBu", "gray"];
-  const KIND_NAMES = { map: "Map", line: "Along the grid", series: "Time series", profile: "Profile", hovmoller: "Depth against time" };
-  const pick = {
-    name: null, stream: null, kind: null, step: 0, level: 0, cell: null, position: null,
-    cmap: "", vmin: "", vmax: "", log: false, coast: false,
-  };
+  const pick = { name: null, stream: null, step: 0, level: 0, cmap: "", vmin: "", vmax: "", log: false, coast: false };
   let lastClim = null;
-  // what the map's axes are: "lonlat" or "index" (the grid's own), for the cell a click is at
-  let lastAxes = "lonlat";
   $("v-cmap").replaceChildren(...COLOUR_MAPS.map((name) => el("option", { value: name, text: name || "Automatic (ncplot's choice)" })));
 
   async function loadCatalogue() {
@@ -484,7 +450,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (!reply.ok) return;
     catalogue = reply;
     catalogueNumber = number;
-    Object.assign(pick, { name: null, stream: null, kind: null, step: 0, level: 0, cell: null, position: null });
+    Object.assign(pick, { name: null, stream: null, step: 0, level: 0 });
     $("v-search").value = "";
     clearPlot();
     renderList();
@@ -518,7 +484,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       about.long_name || about.units ? el("span", { class: "var-list__long", text: [about.long_name, about.units && `(${about.units})`].filter(Boolean).join(" ") }) : null,
       about.streams.length > 1 ? el("span", { class: "var-list__more", text: `In ${about.streams.length} file types` }) : null,
     ));
-    $("v-list").replaceChildren(...(items.length ? items : [el("li", { class: "var-list__none", text: "No variable matches that." })]));
+    const none = Object.keys(catalogue.variables).length ? "No variable matches that." : "No variable here can be mapped.";
+    $("v-list").replaceChildren(...(items.length ? items : [el("li", { class: "var-list__none", text: none })]));
   }
   $("v-search").addEventListener("input", () => { listActive = 0; renderList(); });
   $("v-search").addEventListener("keydown", (event) => {
@@ -556,7 +523,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   function afterStream(before) {
     const now = inStream();
     if (now) {
-      if (!now.kinds.includes(pick.kind)) pick.kind = now.kinds[0];
       if (!before || before.stream !== now.stream) {
         // the time as near the one shown as the new file type has
         const shown = before ? streamOf(before.stream).times[pick.step] : null;
@@ -565,12 +531,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
         if (pick.step < 0) pick.step = 0;
       }
       if (pick.level >= now.levels) pick.level = 0;
-      // a cell of another grid means nothing on this one
-      if (!before || String(before.shape.slice(-2)) !== String(now.shape.slice(-2)) || String(before.horizontal) !== String(now.horizontal)) {
-        pick.cell = null;
-        pick.position = null;
-        hidePoint();
-      }
     } else {
       clearPlot();
     }
@@ -633,17 +593,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 
   function renderControls(now) {
     const stream = streamOf(now.stream);
-    $("v-kind").replaceChildren(...now.kinds.map((kind) => el("button", {
-      type: "button", text: KIND_NAMES[kind], "aria-pressed": String(kind === pick.kind),
-      onclick: () => {
-        pick.kind = kind;
-        // the plot at a point is the plot itself now
-        if (!["map", "line"].includes(kind)) hidePoint();
-        renderControls(now);
-        requestPlot(0);
-      },
-    })));
-    const usesTime = now.time && ["map", "line", "profile"].includes(pick.kind) && stream.steps > 1;
+    const usesTime = now.time && stream.steps > 1;
     $("c-time").hidden = !usesTime;
     $("v-step").max = String(Math.max(0, stream.steps - 1));
     $("v-step").value = String(pick.step);
@@ -651,7 +601,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("v-prev").disabled = pick.step <= 0;
     $("v-next").disabled = pick.step >= stream.steps - 1;
     if (!usesTime) stopPlay();
-    const usesLevel = now.vertical && now.levels > 1 && ["map", "line", "series"].includes(pick.kind);
+    const usesLevel = now.vertical && now.levels > 1;
     $("c-level").hidden = !usesLevel;
     if (usesLevel) {
       const units = now.level_units ? ` ${now.level_units}` : "";
@@ -659,31 +609,14 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       $("v-level").replaceChildren(...options);
       $("v-level").value = String(pick.level);
     }
-    const usesCell = ["series", "profile", "hovmoller"].includes(pick.kind) || (now.kinds.includes("map") && now.time);
-    $("c-cell").hidden = !usesCell;
-    const cell = $("v-cell");
-    cell.classList.toggle("is-none", !pick.cell);
-    cell.textContent = pick.cell ? cellText() : (now.kinds.includes("map") ? "Click on the map to see the variable through time there." : "The middle of the grid.");
-    const coloured = ["map", "hovmoller"].includes(pick.kind);
-    $("c-colour").hidden = !coloured;
     $("v-cmap").value = pick.cmap;
     $("v-vmin").value = pick.vmin;
     $("v-vmax").value = pick.vmax;
     $("v-log").checked = pick.log;
     $("v-coast").checked = pick.coast && state.coast;
-    $("v-coast").disabled = !state.coast || pick.kind !== "map";
+    $("v-coast").disabled = !state.coast;
     $("v-coast-label").classList.toggle("is-off", $("v-coast").disabled);
     $("v-coast-label").title = state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)";
-    $("v-keep").hidden = pick.kind !== "map";
-  }
-
-  function cellText() {
-    const now = inStream();
-    const where = pick.position
-      ? `${Math.abs(pick.position[0]).toFixed(3)}°${pick.position[0] < 0 ? "W" : "E"}, ${Math.abs(pick.position[1]).toFixed(3)}°${pick.position[1] < 0 ? "S" : "N"}`
-      : "";
-    const index = now ? now.horizontal.map((dim, i) => `${dim}=${pick.cell[i]}`).join(", ") : "";
-    return [where, `cell ${index}`].filter(Boolean).join(" · ");
   }
 
   // the time: the slider, the arrows and playing through them
@@ -727,7 +660,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (event.key === "ArrowLeft") { event.preventDefault(); setStep(pick.step - 1); }
   });
 
-  $("v-level").addEventListener("change", (event) => { pick.level = Number(event.target.value); requestPlot(0); if (!$("point").hidden) requestPoint(); });
+  $("v-level").addEventListener("change", (event) => { pick.level = Number(event.target.value); requestPlot(0); });
   $("v-cmap").addEventListener("change", (event) => { pick.cmap = event.target.value; requestPlot(0); });
   for (const name of ["vmin", "vmax"]) {
     $(`v-${name}`).addEventListener("input", (event) => {
@@ -751,11 +684,10 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   // ---- the plots ----
   let plotNumber = 0;
   let plotTimer = null;
-  function plotParams(kind) {
+  function plotParams() {
     return {
-      kind, stream: String(pick.stream), var: pick.name, step: String(pick.step), level: String(pick.level),
-      cell: pick.cell ? pick.cell.join(",") : "", cmap: pick.cmap, vmin: pick.vmin, vmax: pick.vmax,
-      log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
+      stream: String(pick.stream), var: pick.name, step: String(pick.step), level: String(pick.level),
+      cmap: pick.cmap, vmin: pick.vmin, vmax: pick.vmax, log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
     };
   }
 
@@ -766,7 +698,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("plot-busy").hidden = true;
     $("plot-error").hidden = true;
     $("plot-notes").replaceChildren();
-    hidePoint();
     if (catalogue && pick.name && pick.stream === null) {
       $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose the file type" }), `${pick.name} is in more than one: say which on the left.`));
     } else {
@@ -778,17 +709,15 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     clearTimeout(plotTimer);
     const number = ++plotNumber;
     $("plot-busy").hidden = false;
-    $("plot-busy-text").textContent = ["series", "hovmoller"].includes(pick.kind) ? "Reading every file at this point" : "Reading the data";
     plotTimer = setTimeout(async () => {
       let reply;
       try {
-        reply = await (await fetch(`api/plot?${query(plotParams(pick.kind))}`, { cache: "no-store" })).json();
+        reply = await (await fetch(`api/plot?${query(plotParams())}`, { cache: "no-store" })).json();
       } catch (error) {
         reply = { ok: false, error: "ncviewer is no longer running." };
       }
       if (number !== plotNumber) return;
       $("plot-busy").hidden = true;
-      if (reply.stopped) return;
       if (!reply.ok) {
         $("plot-error").textContent = reply.error;
         $("plot-error").hidden = false;
@@ -796,12 +725,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
         return;
       }
       $("plot-error").hidden = true;
-      if (reply.cell && !pick.cell) {
-        pick.cell = reply.cell;
-        pick.position = reply.position || null;
-      }
       lastClim = reply.clim || null;
-      if (reply.axes) lastAxes = reply.axes;
       await draw("plot", reply.item);
       $("plot-empty").hidden = true;
       const notes = (reply.notes || []).map((text) => el("span", { class: "is-warn", text }));
@@ -822,51 +746,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       node.append(el("p", { class: "stage__error", text: "Bokeh could not be loaded, so nothing can be drawn." }));
     }
   }
-
-  // a click on the map: the cell nearest it, and the variable through time there
-  document.addEventListener("ncviewer-tap", async (event) => {
-    const now = inStream();
-    if (!now || !["map", "line"].includes(pick.kind)) return;
-    const { x, y } = event.detail;
-    let reply;
-    try {
-      reply = await (await fetch(`api/cell?${query({ stream: String(pick.stream), var: pick.name, x, y, axes: pick.kind === "map" ? lastAxes : "index" })}`, { cache: "no-store" })).json();
-    } catch (error) {
-      return;
-    }
-    if (!reply.ok) { toast(reply.error); return; }
-    pick.cell = reply.cell;
-    pick.position = reply.position || null;
-    renderControls(now);
-    if (now.time || (now.vertical && now.levels > 1)) requestPoint();
-  });
-
-  let pointNumber = 0;
-  async function requestPoint() {
-    const now = inStream();
-    if (!now || !pick.cell) return;
-    const number = ++pointNumber;
-    const kind = now.time ? "series" : "profile";
-    $("point").hidden = false;
-    $("point-busy").hidden = false;
-    let reply;
-    try {
-      reply = await (await fetch(`api/plot?${query({ ...plotParams(kind), page: `${pageId}-point` })}`, { cache: "no-store" })).json();
-    } catch (error) {
-      reply = { ok: false, error: "ncviewer is no longer running." };
-    }
-    if (number !== pointNumber) return;
-    $("point-busy").hidden = true;
-    if (reply.stopped) return;
-    if (!reply.ok) { toast(reply.error); hidePoint(); return; }
-    await draw("point-plot", reply.item);
-  }
-  function hidePoint() {
-    pointNumber++;
-    $("point").hidden = true;
-    $("point-plot").replaceChildren();
-  }
-  $("point-close").addEventListener("click", hidePoint);
 
   // ---- following ncviewer's state ----
   const TITLES = {

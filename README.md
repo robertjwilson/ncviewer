@@ -2,10 +2,10 @@
 
 A window in your browser for looking at what a model simulation's output holds. Type in
 the directory of the output and ncviewer finds every netCDF file, groups them into file
-types, and reads the variables and times they hold. Then search for a variable and plot it.
+types, and reads the variables and times they hold. Then search for a variable and map it.
 
 Its look and its first page come from the [OceanVal](https://github.com/PlymouthMarineLaboratory/OceanVal)
-window. How it chooses a plot comes from [ncplot](https://github.com/pmlmodelling/ncplot).
+window. How it draws a map comes from [ncplot](https://github.com/pmlmodelling/ncplot).
 
 ## Install
 
@@ -56,21 +56,18 @@ changed files.
 
 ### Page 2: the viewer
 
-- **Left**: search the variables by name, description or units. If a variable is in more
-  than one file type, choose which one to use. Below that is what the variable is (its
+- **Left**: search the variables by name, description or units. Only variables that can be
+  mapped (those with two horizontal dimensions) are listed. If a variable is in more than
+  one file type, choose which one to use. Below that is what the variable is (its
   dimensions, files, times and calendar), followed by the controls:
-  - **Plot**: Map, Time series, Profile, Depth against time, or Along the grid (for
-    output with one horizontal dimension).
   - **Time**: a slider, the arrow buttons (or the arrow keys), and Play.
   - **Depth**: the level to show.
   - **Colours**: the colour map, fixed limits ("Keep this scale for every time"), a
     logarithmic scale, and coastlines (needs cartopy and geoviews).
-- **Middle**: the plot. You can zoom, pan, hover to read values, and save a PNG. Click on
-  a map to show the variable through time at that cell underneath.
+- **Middle**: the map. You can zoom, pan, hover to read values, and save a PNG.
 
-Only the slice being shown is read. For a map, that is one time step at one level of one
-file. For a time series, it is one cell of each file. So output of many GB stays quick
-to look at.
+Only the map being shown is read: one time step at one level of one file. So output of
+many GB stays quick to look at.
 
 ### How a map is drawn (from ncplot)
 
