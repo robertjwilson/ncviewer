@@ -100,6 +100,10 @@ def test_viewer(page, simulation):
     # the calendar is not shown
     assert "Calendar" not in tab.text_content("#v-info")
     assert "Times" in tab.text_content("#v-info")
+    # the first and last dates are one row, without the time of day
+    info = tab.text_content("#v-info")
+    assert "Dates2000-01-16 \u2013 2001-12-16" in info
+    assert "From" not in info and "To2001" not in info
     # nothing is written under the map
     assert tab.locator("#plot-notes, .stage__notes").count() == 0
     # the map fills its box, not a strip of axes

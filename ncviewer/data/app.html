@@ -658,7 +658,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       info.push(["Files", `${stream.files}`]);
       if (stream.has_times) {
         info.push(["Times", `${stream.steps}${stream.resolution ? `, ${stream.resolution}` : ""}`]);
-        info.push(["From", stream.first, true], ["To", stream.last, true]);
+        // the dates only, on one line
+        info.push(["Dates", `${stream.first.slice(0, 10)} \u2013 ${stream.last.slice(0, 10)}`, true]);
       }
     }
     $("v-info").replaceChildren(...info.filter(([, value]) => value).flatMap(([key, value, mono]) => [
