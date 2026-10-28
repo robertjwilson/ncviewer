@@ -379,32 +379,74 @@ class Catalogue:
         _, index, at = steps[step]
         return stream, stream["files"][index], at, stream["times"][step]
 
-    def field(self, stream, name, step=0, level=0, missing=()):
-        """The 2-D slice of variable name at time step and level, as
-        a loaded DataArray with its longitude/latitude as coords, and the
-        time it is at. missing is a list of (low, high) ranges (see
-        missing_mask): cells with such values are set to NaN, and how many
-        there were is in the array's attrs["n_missing"]."""
-        about = self.about(stream, name)
+    def combined(self, stream, names):
+        """How to draw the sum of the variables names (one name is just that
+        variable): a copy of the first one's about, with the names joined
+        by " + " as its long_name (and name), and "units_differ" the units,
+        if they are not all the same. Raises ValueError, in words for the
+        user, if they cannot be added: they have to be in the file type, and
+        have the same dimensions and sizes."""
+        names = [names] if isinstance(names, str) else list(names)
+        if not names:
+            raise ValueError("Choose a variable.")
+        if len(set(names)) != len(names):
+            raise ValueError("A variable can only be added once.")
+        try:
+            abouts = [self.about(stream, name) for name in names]
+        except KeyError as error:
+            raise ValueError(str(error.args[0])) from None
+        first = abouts[0]
+        for name, about in zip(names[1:], abouts[1:]):
+            if about["dims"] != first["dims"] or about["shape"] != first["shape"]:
+                raise ValueError(
+                    f"{names[0]} and {name} have different dimensions, so they cannot be added."
+                )
+        found = dict(first)
+        units = [about["units"] for about in abouts]
+        if len(names) > 1:
+            found["name"] = " + ".join(names)
+            found["long_name"] = " + ".join(about["long_name"] or name for name, about in zip(names, abouts))
+            found["units"] = units[0] if len(set(units)) == 1 else ""
+            found["units_differ"] = sorted(set(units)) if len(set(units)) > 1 else None
+        else:
+            found["name"] = names[0]
+            found["units_differ"] = None
+        return found
+
+    def field(self, stream, names, step=0, level=0, missing=()):
+        """The 2-D slice at time step and level of the variable names, or of
+        the sum of them (see combined), as a loaded DataArray with its
+        longitude/latitude as coords, and the time it is at. The sum is made
+        here in xarray: missing is a list of (low, high) ranges (see
+        missing_mask) that are set to NaN in each variable before it is
+        added, and a cell that is missing in any of them is missing in the
+        sum. How many cells were set missing is in attrs["n_missing"]."""
+        names = [names] if isinstance(names, str) else list(names)
+        about = self.combined(stream, names)
         record, path, at, when = self._step(stream, step)
         select = {}
         if about["time_dim"]:
             select[about["time_dim"]] = at
         if about["vertical"]:
             select[about["vertical"]] = min(max(int(level), 0), about["levels"] - 1)
-        with LOCK:
-            ds = self._dataset(path)
-            data = ds[name].isel(select)
-            # anything else that is not horizontal is taken at its first index
-            extra = {dim: 0 for dim in data.dims if dim not in about["horizontal"]}
-            data = data.isel(extra).load()
-            for key in (about["lon"], about["lat"]):
-                if key is not None and key not in data.coords and key in ds.variables:
-                    data = data.assign_coords({key: ds[key].load()})
-        mask = missing_mask(data, missing)
-        data = data.where(~mask)
-        data.attrs["n_missing"] = int(mask.sum())
-        return data, (when if about["time_dim"] else None)
+        total = None
+        n_missing = 0
+        for name in names:
+            with LOCK:
+                ds = self._dataset(path)
+                data = ds[name].isel(select)
+                # anything else that is not horizontal is taken at its first index
+                extra = {dim: 0 for dim in data.dims if dim not in about["horizontal"]}
+                data = data.isel(extra).load()
+                for key in (about["lon"], about["lat"]):
+                    if key is not None and key not in data.coords and key in ds.variables:
+                        data = data.assign_coords({key: ds[key].load()})
+            mask = missing_mask(data, missing)
+            data = data.where(~mask)
+            n_missing += int(mask.sum())
+            total = data if total is None else total + data
+        total.attrs = {"n_missing": n_missing}
+        return total, (when if about["time_dim"] else None)
 
 
 def _bound(value, dtype):

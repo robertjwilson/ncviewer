@@ -68,7 +68,7 @@ def test_probe_then_view(running, simulation):
     _wait_for(app, "viewer")
     summary = _get(base, "api/catalogue", token=token)
     assert summary["files"] == 48
-    reply = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    reply = _get(base, "api/plot", token=token, stream=0, vars='["votemper"]', step=3, level=1)
     assert reply["ok"] and reply["file"].startswith("2000/04/")
     assert reply["when"] == "2000-04-16 00:00:00"
     assert reply["clim"][0] < reply["clim"][1]
@@ -76,19 +76,31 @@ def test_probe_then_view(running, simulation):
     # the missing values were given on page 1: the warmest and coldest cells go, and the scale narrows
     lo, hi = reply["clim"]
     app.missing = [(lo, lo + 0.01), (hi - 0.01, hi)]
-    narrower = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    narrower = _get(base, "api/plot", token=token, stream=0, vars='["votemper"]', step=3, level=1)
     assert narrower["n_missing"] > 0
     assert lo < narrower["clim"][0] and narrower["clim"][1] < hi
     app.missing = [(-1e9, 1e9)]
-    everything = _get(base, "api/plot", token=token, stream=0, var="votemper", step=3, level=1)
+    everything = _get(base, "api/plot", token=token, stream=0, vars='["votemper"]', step=3, level=1)
     assert everything["ok"] and any("Every cell is missing" in note for note in everything["notes"])
     app.missing = []
-    reply = _get(base, "api/plot", token=token, stream=0, var="votemper", vmin=0, vmax=30)
+    reply = _get(base, "api/plot", token=token, stream=0, vars='["votemper"]', vmin=0, vmax=30)
     assert reply["clim"] == [0, 30]
-    assert _get(base, "api/plot", token=token, stream=0, var="nothing")["ok"] is False
+    assert _get(base, "api/plot", token=token, stream=0, vars='["nothing"]')["ok"] is False
+    # the sum of two variables of a file type: one map, titled by both, and the units said to differ
+    summed = _get(base, "api/plot", token=token, stream=1, vars='["chl", "votemper"]', step=3, level=1)
+    assert summed["ok"] and any("units differ (degC, mg m-3)" in note for note in summed["notes"])
+    single = _get(base, "api/plot", token=token, stream=1, vars='["chl"]', step=3, level=1)
+    assert summed["clim"][0] > single["clim"][1] and "units differ" not in " ".join(single["notes"])
+    assert "Chlorophyll + Temperature" in str(summed["item"])
+    # what cannot be added is said in words, not as an exception
+    refused = _get(base, "api/plot", token=token, stream=0, vars='["votemper", "sossheig"]')
+    assert refused == {"ok": False, "error": "votemper and sossheig have different dimensions, so they cannot be added."}
+    assert _get(base, "api/plot", token=token, stream=0, vars='["votemper", "votemper"]')["ok"] is False
+    assert _get(base, "api/plot", token=token, stream=0, vars="[]") == {"ok": False, "error": "Choose a variable."}
+    assert _get(base, "api/plot", token=token, stream=0, vars="nonsense")["error"] == "The variables could not be read."
     # only maps are drawn: there is no asking for a cell
     with pytest.raises(urllib.error.HTTPError):
-        _get(base, "api/cell", token=token, stream=0, var="votemper", x=1, y=1)
+        _get(base, "api/cell", token=token, stream=0, x=1, y=1)
     _post(base, "api/back", token, {})
     assert app.view == "files"
 
@@ -136,3 +148,11 @@ def test_parse_missing():
     for bad in ('[["abc",""]]', '[["1","x"]]', '[["","3"]]', '[["nan",""]]', '[["inf",""]]', "not json", '{"a": 1}'):
         with pytest.raises(ValueError):
             ncapp.parse_missing(bad)
+
+
+def test_parse_names():
+    assert ncapp.parse_names("") == []
+    assert ncapp.parse_names('["a", "b"]') == ["a", "b"]
+    for bad in ("x", '{"a": 1}', "[1]"):
+        with pytest.raises(ValueError):
+            ncapp.parse_names(bad)

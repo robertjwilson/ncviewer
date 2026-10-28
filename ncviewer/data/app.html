@@ -70,6 +70,12 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .var-list__name { font: 600 13px/18px var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
 .var-list__long { font-size: 12.5px; color: var(--muted); }
 .var-list__more { font-size: 11.5px; color: var(--teal-700); font-weight: 600; }
+.var-sum { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0 0; color: var(--muted); font-size: 12.5px; }
+.var-list li { grid-template-columns: max-content minmax(0, 1fr); column-gap: 8px; align-items: start; }
+.var-list li > input { grid-row: 1 / span 3; margin: 3px 0 0; accent-color: var(--teal-600); cursor: pointer; }
+.var-list li > span { grid-column: 2; }
+.var-list li.is-incompatible { opacity: 0.5; cursor: not-allowed; }
+.var-list li.is-incompatible > input { cursor: not-allowed; }
 .var-list__none { padding: 8px; color: var(--muted); font-size: 13px; cursor: default !important; }
 .info { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; margin: 0; font-size: 12.5px; }
 .info dt { color: var(--muted); }
@@ -176,7 +182,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           <div class="search">
             <input class="s-input" id="v-search" type="search" placeholder="Search by name or description" spellcheck="false" autocapitalize="off" autocomplete="off" aria-controls="v-list">
           </div>
-          <ul class="var-list" id="v-list" role="listbox" aria-label="Variables"></ul>
+          <p class="var-sum" id="v-sum-hint"><span>Tick the boxes to map the <strong>sum</strong> of several variables.</span><button type="button" class="link" id="v-clear" hidden>Clear</button></p>
+          <ul class="var-list" id="v-list" role="listbox" aria-label="Variables" aria-multiselectable="true"></ul>
         </div>
         <div id="v-chosen" hidden>
           <h2>About it</h2>
@@ -487,7 +494,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   let catalogue = null;
   let catalogueNumber = null;
   const COLOUR_MAPS = ["", "viridis", "cividis", "plasma", "inferno", "magma", "turbo", "RdBu_r", "coolwarm", "Blues", "YlGnBu", "gray"];
-  const pick = { name: null, stream: null, step: 0, level: 0, cmap: "", vmin: "", vmax: "", log: false, coast: false };
+  const pick = { names: [], stream: null, step: 0, level: 0, cmap: "", vmin: "", vmax: "", log: false, coast: false };
   let lastClim = null;
   $("v-cmap").replaceChildren(...COLOUR_MAPS.map((name) => el("option", { value: name, text: name || "Automatic (ncplot's choice)" })));
 
@@ -502,7 +509,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (!reply.ok) return;
     catalogue = reply;
     catalogueNumber = number;
-    Object.assign(pick, { name: null, stream: null, step: 0, level: 0 });
+    Object.assign(pick, { names: [], stream: null, step: 0, level: 0 });
     $("v-search").value = "";
     clearPlot();
     renderList();
@@ -526,18 +533,31 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (!catalogue) return;
     const found = matching();
     listActive = Math.min(listActive, found.length - 1);
-    const items = found.map(([name, about], index) => el("li", {
-      role: "option", "data-name": name,
-      class: `${name === pick.name ? "is-chosen" : ""}${index === listActive ? " is-active" : ""}`,
-      "aria-selected": String(name === pick.name),
-      onclick: () => choose(name),
-    },
-      el("span", { class: "var-list__name", text: name }),
-      about.long_name || about.units ? el("span", { class: "var-list__long", text: [about.long_name, about.units && `(${about.units})`].filter(Boolean).join(" ") }) : null,
-      about.streams.length > 1 ? el("span", { class: "var-list__more", text: `In ${about.streams.length} file types` }) : null,
-    ));
+    const items = found.map(([name, about], index) => {
+      const ticked = pick.names.includes(name);
+      // what cannot be added to the variables ticked: no file type has them all with the same dimensions
+      const why = !ticked && pick.names.length && !streamsFor([...pick.names, name]).length
+        ? `${name} cannot be added to ${pick.names.join(" + ")}: no file type holds them with the same dimensions.` : "";
+      const box = el("input", { type: "checkbox", "aria-label": `Add ${name} to the sum`, disabled: Boolean(why) });
+      box.checked = ticked;
+      box.addEventListener("click", (event) => event.stopPropagation());
+      box.addEventListener("change", () => toggle(name));
+      return el("li", {
+        role: "option", "data-name": name, title: why || null,
+        class: `${ticked ? "is-chosen" : ""}${index === listActive ? " is-active" : ""}${why ? " is-incompatible" : ""}`,
+        "aria-selected": String(ticked), "aria-disabled": String(Boolean(why)),
+        // a click on the row chooses it alone
+        onclick: () => { if (!why) choose(name); },
+      },
+        box,
+        el("span", { class: "var-list__name", text: name }),
+        about.long_name || about.units ? el("span", { class: "var-list__long", text: [about.long_name, about.units && `(${about.units})`].filter(Boolean).join(" ") }) : null,
+        about.streams.length > 1 ? el("span", { class: "var-list__more", text: `In ${about.streams.length} file types` }) : null,
+      );
+    });
     const none = Object.keys(catalogue.variables).length ? "No variable matches that." : "No variable here can be mapped.";
     $("v-list").replaceChildren(...(items.length ? items : [el("li", { class: "var-list__none", text: none })]));
+    $("v-clear").hidden = !pick.names.length;
   }
   $("v-search").addEventListener("input", () => { listActive = 0; renderList(); });
   $("v-search").addEventListener("keydown", (event) => {
@@ -552,25 +572,55 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     } else if (event.key === "Enter") {
       event.preventDefault();
       const chosen = found[Math.max(0, listActive)];
-      if (chosen) choose(chosen[0]);
+      // Shift+Enter ticks it, to add it to the sum; Enter chooses it alone
+      if (chosen && event.shiftKey) { if (!$("v-list").querySelector(".is-active.is-incompatible")) toggle(chosen[0]); }
+      else if (chosen) choose(chosen[0]);
     }
   });
 
   const streamOf = (id) => catalogue.streams.find((stream) => stream.id === id);
-  // the variable as it is in the chosen file type
+  // the file types that hold every one of names with the same dimensions and sizes (as the first)
+  function streamsFor(names) {
+    if (!names.length) return [];
+    return catalogue.variables[names[0]].streams.filter((first) => names.every((name) => {
+      const entry = catalogue.variables[name].streams.find((other) => other.stream === first.stream);
+      return entry && String(entry.dims) === String(first.dims) && String(entry.shape) === String(first.shape);
+    })).map((entry) => entry.stream);
+  }
+  // the first variable as it is in the chosen file type
   function inStream() {
-    if (!pick.name || pick.stream === null) return null;
-    return catalogue.variables[pick.name].streams.find((entry) => entry.stream === pick.stream) || null;
+    if (!pick.names.length || pick.stream === null) return null;
+    return catalogue.variables[pick.names[0]].streams.find((entry) => entry.stream === pick.stream) || null;
   }
 
+  // the file type is the user's to say if the variables are in more than one
+  function settle() {
+    const holders = streamsFor(pick.names);
+    pick.stream = holders.includes(pick.stream) ? pick.stream : (holders.length === 1 ? holders[0] : null);
+  }
+
+  // one variable alone
   function choose(name) {
     const before = inStream();
-    pick.name = name;
-    const streams = catalogue.variables[name].streams;
-    // the file type is the user's to say if the variable is in more than one
-    pick.stream = streams.length === 1 ? streams[0].stream : (streams.some((entry) => entry.stream === pick.stream) ? pick.stream : null);
+    pick.names = [name];
+    settle();
     afterStream(before);
   }
+
+  // adds a variable to the sum, or takes it out
+  function toggle(name) {
+    const before = inStream();
+    pick.names = pick.names.includes(name) ? pick.names.filter((other) => other !== name) : [...pick.names, name];
+    settle();
+    if (!pick.names.length) pick.stream = null;
+    afterStream(before);
+  }
+  $("v-clear").addEventListener("click", () => {
+    const before = inStream();
+    pick.names = [];
+    pick.stream = null;
+    afterStream(before);
+  });
 
   function afterStream(before) {
     const now = inStream();
@@ -592,14 +642,18 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   }
 
   function renderSide() {
-    const chosen = Boolean(catalogue && pick.name);
+    const chosen = Boolean(catalogue && pick.names.length);
     $("v-chosen").hidden = !chosen;
     $("v-streams").hidden = !chosen;
     const now = chosen ? inStream() : null;
     $("v-controls").hidden = !now;
     if (!chosen) return;
-    const about = catalogue.variables[pick.name];
-    const info = [["Name", pick.name, true], ["Description", about.long_name], ["Units", about.units]];
+    const abouts = pick.names.map((name) => catalogue.variables[name]);
+    const about = abouts[0];
+    const sum = pick.names.length > 1;
+    const info = sum
+      ? [["Sum of", pick.names.map((name, index) => `${name}${abouts[index].units ? ` (${abouts[index].units})` : ""}`).join(" + "), true]]
+      : [["Name", pick.names[0], true], ["Description", about.long_name], ["Units", about.units]];
     if (now) {
       const stream = streamOf(now.stream);
       info.push(["Dimensions", now.dims.map((dim, index) => `${dim} (${now.shape[index]})`).join(", "), true]);
@@ -615,13 +669,13 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       el("dt", { text: key }), el("dd", { class: mono ? "is-mono" : "", text: value }),
     ]));
 
-    // the file types it is in
-    const holders = about.streams;
+    // the file types that hold it (all of them, for a sum)
+    const holders = streamsFor(pick.names).map((id) => ({ stream: id }));
     const box = $("v-streams");
     if (holders.length > 1) {
       box.replaceChildren(...[
         el("h2", { text: "File type" }),
-        pick.stream === null ? el("p", { class: "streams__ask", text: `${pick.name} is in ${holders.length} file types. Which do you want?` }) : null,
+        pick.stream === null ? el("p", { class: "streams__ask", text: `${sum ? pick.names.join(" and ") + " are both" : pick.names[0] + " is"} in ${holders.length} file types. Which do you want?` }) : null,
       ].filter(Boolean),
         ...holders.map((entry) => {
           const stream = streamOf(entry.stream);
@@ -738,7 +792,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   let plotTimer = null;
   function plotParams() {
     return {
-      stream: String(pick.stream), var: pick.name, step: String(pick.step), level: String(pick.level),
+      stream: String(pick.stream), vars: JSON.stringify(pick.names), step: String(pick.step), level: String(pick.level),
       cmap: pick.cmap, vmin: pick.vmin, vmax: pick.vmax, log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
     };
   }
@@ -750,8 +804,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("plot-busy").hidden = true;
     $("plot-error").hidden = true;
     $("plot-notes").replaceChildren();
-    if (catalogue && pick.name && pick.stream === null) {
-      $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose the file type" }), `${pick.name} is in more than one: say which on the left.`));
+    if (catalogue && pick.names.length && pick.stream === null) {
+      $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose the file type" }), "They are in more than one: say which on the left."));
     } else {
       $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose a variable" }), "Search for it on the left."));
     }

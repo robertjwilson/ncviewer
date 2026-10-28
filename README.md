@@ -63,7 +63,14 @@ changed files.
 
 - **Left**: search the variables by name, description or units. Only variables that can be
   mapped (those with two horizontal dimensions) are listed. If a variable is in more than
-  one file type, choose which one to use. Below that is what the variable is (its
+  one file type, choose which one to use. Clicking a variable maps it alone.
+  To map the **sum** of several variables, tick the boxes beside them (or press Shift+Enter
+  on the highlighted one); **Clear** unticks them all. The variables must be in the same
+  file type and have the same dimensions, so a variable that cannot be added to those
+  ticked is dimmed. The sum is made in xarray before the map is drawn: your missing
+  values are applied to each variable first, and a cell that is missing in any of them is
+  missing in the sum. If the units differ, the sum is drawn and the page says so. Below
+  that is what the variable is (its
   dimensions, files, times and calendar), followed by the controls:
   - **Time**: a slider, the arrow buttons (or the arrow keys), and Play.
   - **Depth**: the level to show.

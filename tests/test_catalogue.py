@@ -150,3 +150,42 @@ def test_field_with_missing_values(found):
     # everything from the lowest to the highest
     everything, _ = found.field(0, "votemper", 0, 0, [(low - 1, float(rows[-1]) + 1)])
     assert np.isnan(everything.values).all()
+
+
+def test_sum_of_variables(found):
+    chl, when = found.field(1, "chl", 3, 1)
+    temperature, _ = found.field(1, "votemper", 3, 1)
+    total, summed_when = found.field(1, ["chl", "votemper"], 3, 1)
+    assert summed_when == when
+    assert np.allclose(total.values, (chl + temperature).values, equal_nan=True)
+    # land is missing in both, so in the sum
+    assert np.isnan(total.values).sum() == np.isnan(chl.values).sum() > 0
+    # one name in a list is that variable
+    alone, _ = found.field(1, ["chl"], 3, 1)
+    assert np.array_equal(alone.values, chl.values, equal_nan=True)
+    about = found.combined(1, ["chl", "votemper"])
+    assert about["name"] == "chl + votemper"
+    assert about["long_name"] == "Chlorophyll + Temperature"
+    assert about["units_differ"] == ["degC", "mg m-3"]
+    assert found.combined(1, ["chl"])["units_differ"] is None
+
+
+def test_sum_applies_missing_values_to_each_variable(found):
+    chl, _ = found.field(1, "chl", 3, 1)
+    low = float(np.nanmin(chl.values))
+    # a range that only chl has in it: those cells are missing in the sum too
+    total, _ = found.field(1, ["chl", "votemper"], 3, 1, [(low, low)])
+    assert total.attrs["n_missing"] > 0
+    plain, _ = found.field(1, ["chl", "votemper"], 3, 1)
+    assert np.isnan(total.values).sum() == np.isnan(plain.values).sum() + total.attrs["n_missing"]
+
+
+def test_what_cannot_be_added(found):
+    with pytest.raises(ValueError, match="different dimensions"):
+        found.combined(0, ["votemper", "sossheig"])
+    with pytest.raises(ValueError, match="only be added once"):
+        found.combined(0, ["votemper", "votemper"])
+    with pytest.raises(ValueError, match="not in that file type"):
+        found.combined(0, ["votemper", "chl"])
+    with pytest.raises(ValueError, match="Choose a variable"):
+        found.combined(0, [])

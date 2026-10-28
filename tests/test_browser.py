@@ -113,3 +113,38 @@ def test_viewer(page, simulation):
     assert tab.locator("#v-kind, #point, #c-cell").count() == 0
     tab.click("#back")
     tab.wait_for_selector("#view-files:not([hidden])")
+
+
+def test_sum_of_variables(page, simulation):
+    tab, app = page
+    tab.fill("#f-simdir", simulation)
+    tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    tab.click("#continue")
+    tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    row = lambda name: f"#v-list li[data-name='{name}']"  # noqa: E731
+    # tick chl: ptrc_T is its only file type, so it is chosen and drawn
+    tab.check(f"{row('chl')} input")
+    tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    # sossheig cannot be added to chl: not the same dimensions
+    assert "is-incompatible" in tab.get_attribute(row("sossheig"), "class")
+    assert tab.is_disabled(f"{row('sossheig')} input")
+    # votemper can (it is in two file types, but only ptrc_T has chl)
+    tab.check(f"{row('votemper')} input")
+    tab.wait_for_function("() => document.querySelector('#v-info').textContent.includes('Sum of')")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert "chl (mg m-3) + votemper (degC)" in tab.text_content("#v-info")
+    assert "units differ" in tab.text_content("#plot-notes")
+    assert tab.is_hidden("#plot-error")
+    # the file type is not asked: only one holds both
+    assert tab.is_hidden("#v-streams")
+    # Clear unticks everything
+    tab.click("#v-clear")
+    assert tab.locator("#v-list li input:checked").count() == 0
+    assert tab.is_hidden("#v-chosen")
+    # clicking a row's text chooses that one alone, and ticks only it
+    tab.click(f"{row('sossheig')} .var-list__name")
+    tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
+    assert tab.locator("#v-list li input:checked").count() == 1
+    tab.click("#back")
+    tab.wait_for_selector("#view-files:not([hidden])")

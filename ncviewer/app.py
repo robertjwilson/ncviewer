@@ -225,11 +225,13 @@ class App:
         found = self.catalogue
         if found is None:
             return {"ok": False, "error": "Nothing has been read yet."}
-        stream, name = query.get("stream", "0"), query.get("var", "")
+        stream = query.get("stream", "0")
         step, level = int(query.get("step") or 0), int(query.get("level") or 0)
         try:
-            about = found.about(stream, name)
-            data, when = found.field(stream, name, step, level, self.missing)
+            names = parse_names(query.get("vars"))
+            about = found.combined(stream, names)
+            name = about["name"]
+            data, when = found.field(stream, names, step, level, self.missing)
             n_missing = data.attrs.get("n_missing", 0)
             item, notes, clim = plotting.map_plot(
                 data, about, name, when,
@@ -239,6 +241,10 @@ class App:
                 log=query.get("log") == "1",
                 coast=query.get("coast") == "1",
             )
+            if about["units_differ"]:
+                notes.append(
+                    f"The units differ ({', '.join(u or 'none' for u in about['units_differ'])}), so the sum may not mean anything."
+                )
             if n_missing and not data.notnull().any():
                 notes.append("Every cell is missing, so there is nothing to show. Check the missing values.")
             record = found.streams[int(stream)]
@@ -247,6 +253,9 @@ class App:
                 "ok": True, "item": item, "notes": notes, "clim": clim, "when": when, "n_missing": n_missing,
                 "file": os.path.relpath(record["files"][index], found.simdir),
             }
+        except ValueError as error:
+            # said in words for the user
+            return {"ok": False, "error": str(error)}
         except Exception as error:  # noqa: BLE001 - told to the page
             traceback.print_exc()
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
@@ -308,6 +317,17 @@ def _has_geoviews():
         return all(importlib.util.find_spec(name) is not None for name in ("geoviews", "cartopy"))
     except (ImportError, ValueError):
         return False
+
+
+def parse_names(text):
+    """The variables to map, from the page's JSON list of names. Raises
+    ValueError, in words for the user, for anything else."""
+    try:
+        names = json.loads(text or "[]")
+        assert isinstance(names, list) and all(isinstance(name, str) for name in names)
+    except (ValueError, AssertionError):
+        raise ValueError("The variables could not be read.") from None
+    return names
 
 
 def parse_missing(text):
