@@ -726,7 +726,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     const sum = pick.names.length > 1;
     const info = sum
       ? [["Sum of", pick.names.map((name, index) => `${name}${abouts[index].units ? ` (${abouts[index].units})` : ""}`).join(" + "), true]]
-      : [["Name", pick.names[0], true], ["Description", about.long_name], ["Units", about.units]];
+      // (the variable's name and description are in the list above)
+      : [["Units", about.units]];
     if (now) {
       const stream = streamOf(now.stream);
       info.push(["Dimensions", now.dims.map((dim, index) => `${dim} (${now.shape[index]})`).join(", "), true]);
@@ -738,10 +739,10 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       const heldIn = cut ? new Set(stream.step_files.slice(span.lo, span.hi + 1)).size : stream.files;
       info.push(["Files", cut ? `${heldIn.toLocaleString()} of ${stream.files.toLocaleString()}` : `${stream.files.toLocaleString()}`]);
       if (stream.pending > 0) {
-        info.push(["Times", "being read"]);
+        info.push(["Time resolution", "being read"]);
       } else if (stream.has_times) {
-        const often = stream.resolution ? `, ${stream.resolution}` : "";
-        info.push(["Times", cut ? `${(span.hi - span.lo + 1).toLocaleString()} of ${stream.steps.toLocaleString()}${often}` : `${stream.steps.toLocaleString()}${often}`]);
+        // how often the output is ("daily"), not how many times there are
+        info.push(["Time resolution", stream.resolution]);
         // the dates only, on one line
         info.push(["Dates", `${stream.times[span.lo].slice(0, 10)} \u2013 ${stream.times[span.hi].slice(0, 10)}`, true]);
       }

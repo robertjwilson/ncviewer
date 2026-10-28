@@ -113,9 +113,13 @@ def test_viewer(page, simulation):
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     # nothing is said at the bottom of the page (not the files, file types or directory)
     assert tab.text_content("#summary") == ""
+    # the name and description are in the list above, so not said again
+    assert "Name" not in tab.text_content("#v-info") and "Description" not in tab.text_content("#v-info")
+    assert "Units" in tab.text_content("#v-info")
     # the calendar is not shown
     assert "Calendar" not in tab.text_content("#v-info")
-    assert "Times" in tab.text_content("#v-info")
+    assert "Time resolutionmonthly" in tab.text_content("#v-info")
+    assert "Times" not in tab.text_content("#v-info").replace("Time resolution", "")
     # the first and last dates are one row, without the time of day
     info = tab.text_content("#v-info")
     assert "Dates2000-01-16 \u2013 2001-12-16" in info
@@ -399,7 +403,7 @@ def test_first_and_last_year(page, simulation):
     assert tab.get_attribute("#v-step", "max") == "23"
     tab.wait_for_function("() => document.getElementById('v-when').textContent.startsWith('2001-01')")
     info = tab.text_content("#v-info")
-    assert "Times12 of 24, monthly" in info and "Files12 of 24" in info and "Dates2001-01-16 – 2001-12-16" in info
+    assert "Time resolutionmonthly" in info and "Files12 of 24" in info and "Dates2001-01-16 – 2001-12-16" in info
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert tab.is_disabled("#v-prev")
     for _ in range(11):
