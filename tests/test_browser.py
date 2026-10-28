@@ -41,8 +41,11 @@ def test_missing_values_on_the_files_page(page, simulation):
     tab, app = page
     tab.fill("#f-simdir", simulation)
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
-    assert tab.locator("#missing-rows .missing__row").count() == 0
-    tab.click("#missing-add")
+    # the boxes are there from the start, empty, and an untouched row stops nothing
+    assert tab.locator("#missing-rows .missing__row").count() == 1
+    assert tab.is_visible("#missing-from-0") and tab.is_visible("#missing-to-0")
+    assert tab.input_value("#missing-from-0") == ""
+    assert tab.is_enabled("#continue")
     tab.fill("#missing-from-0", "abc")
     # a box that is not a number is marked, and Continue waits
     assert "is-invalid" in tab.get_attribute("#missing-from-0", "class")
@@ -57,6 +60,15 @@ def test_missing_values_on_the_files_page(page, simulation):
     tab.click("#missing-add")
     tab.click("[aria-label='Remove missing value 3']")
     assert tab.locator("#missing-rows .missing__row").count() == 2
+    # removing the last one leaves an empty row to fill in
+    tab.click("[aria-label='Remove missing value 2']")
+    tab.click("[aria-label='Remove missing value 1']")
+    assert tab.locator("#missing-rows .missing__row").count() == 1
+    assert tab.input_value("#missing-from-0") == ""
+    tab.fill("#missing-from-0", "-999")
+    tab.click("#missing-add")
+    tab.fill("#missing-from-1", "10")
+    tab.fill("#missing-to-1", "12.5")
     tab.click("#continue")
     tab.wait_for_function("() => document.querySelector('#view-viewer:not([hidden])')", timeout=60000)
     assert app.missing == [(-999.0, -999.0), (10.0, 12.5)]
@@ -70,7 +82,6 @@ def test_viewer(page, simulation):
     tab, app = page
     tab.fill("#f-simdir", simulation)
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
-    tab.click("#missing-add")
     # the coldest cells of the first map, which the colour scale then leaves out
     tab.fill("#missing-from-0", "0")
     tab.fill("#missing-to-0", "11.3")

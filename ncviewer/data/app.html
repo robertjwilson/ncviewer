@@ -354,6 +354,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   const isNumber = (text) => text.trim() !== "" && Number.isFinite(Number(text));
   const rowOk = (row) => (row[0].trim() === "" ? row[1].trim() === "" : isNumber(row[0]) && (row[1].trim() === "" || isNumber(row[1])));
   function renderMissing() {
+    // the boxes are always there: an empty row if there is none (empty rows are not sent)
+    if (!missingRows.length) missingRows.push(["", ""]);
     $("missing-rows").replaceChildren(...missingRows.map((row, index) => {
       const box = (position, id, placeholder) => {
         const input = el("input", { class: "s-input is-num", id, inputmode: "decimal", placeholder, spellcheck: "false", autocomplete: "off", "aria-label": position === 0 ? `Missing value ${index + 1}, from` : `Missing value ${index + 1}, to` });
