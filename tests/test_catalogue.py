@@ -189,3 +189,51 @@ def test_what_cannot_be_added(found):
         found.combined(0, ["votemper", "chl"])
     with pytest.raises(ValueError, match="Choose a variable"):
         found.combined(0, [])
+
+
+def test_limits_cover_the_whole_run(found):
+    low, high, symmetric = found.limits(1, ["chl"], level=1)
+    # wider than any one month's range
+    month_low = month_high = None
+    for step in range(24):
+        data, _ = found.field(1, "chl", step, 1)
+        values = data.values[np.isfinite(data.values)]
+        month_low = values.min() if month_low is None else min(month_low, values.min())
+        month_high = values.max() if month_high is None else max(month_high, values.max())
+    first, _ = found.field(1, "chl", 0, 1)
+    assert low == pytest.approx(float(month_low)) and high == pytest.approx(float(month_high))
+    # the first month is not the whole run
+    assert high > float(np.nanmax(first.values))
+    assert symmetric is False
+
+
+def test_limits_use_missing_values_and_sums(found):
+    low, high, _ = found.limits(1, ["chl"], level=1)
+    cut, cut_high, _ = found.limits(1, ["chl"], level=1, missing=[(low, low + 0.5)])
+    assert cut > low
+    total_low, total_high, _ = found.limits(1, ["chl", "votemper"], level=1)
+    assert total_low > high
+    # everything missing: nothing to give
+    assert found.limits(1, ["chl"], level=1, missing=[(-1e9, 1e9)]) is None
+
+
+def test_limits_read_a_few_steps_only(found, monkeypatch):
+    steps = []
+    real = found.field
+    monkeypatch.setattr(found, "field", lambda stream, names, step, *args: steps.append(step) or real(stream, names, step, *args))
+    found.limits(1, ["chl"], level=0, samples=5)
+    assert steps == [0, 6, 12, 17, 23]
+
+
+def test_limits_span_zero_are_symmetric(tmp_path):
+    import xarray as xr
+
+    lon, lat = np.arange(4.0), np.arange(3.0)
+    values = np.stack([np.full((3, 4), -2.0), np.full((3, 4), 5.0)])
+    xr.Dataset(
+        {"anomaly": (("time", "lat", "lon"), values, {"units": "K"})},
+        coords={"lon": ("lon", lon, {"units": "degrees_east"}), "lat": ("lat", lat, {"units": "degrees_north"}),
+                "time": ("time", [0.0, 30.0], {"units": "days since 2000-01-01", "calendar": "standard"})},
+    ).to_netcdf(tmp_path / "a.nc")
+    found = catalogue.scan(str(tmp_path), 0)
+    assert found.limits(0, ["anomaly"]) == (-5.0, 5.0, True)

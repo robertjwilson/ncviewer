@@ -102,10 +102,16 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 .tick-label.is-off { color: var(--muted-light); cursor: not-allowed; }
 
 .stage { display: flex; flex-direction: column; min-height: calc(100vh - 170px); padding: 12px; }
-/* a flex row, so the map (a Bokeh figure that fills its box) is given the stage's height */
-.plot { position: relative; flex: 1; min-height: 420px; display: flex; }
-#plot { flex: 1; min-width: 0; }
-#plot > div { width: 100%; height: 100%; }
+/* the map (a Bokeh figure that fills its box) is given the stage's height. Two are stacked: the next
+   frame of an animation is drawn in the one behind, then shown, so there is no blank between frames */
+.plot { position: relative; flex: 1; min-height: 420px; }
+#plot, #plot-b { position: absolute; inset: 0; }
+#plot > div, #plot-b > div { width: 100%; height: 100%; }
+.is-back { visibility: hidden; }
+.play-row { display: flex; gap: 8px; align-items: center; }
+.play-row .g-label { margin: 0; }
+.play-row .s-select { width: auto; min-width: 96px; }
+.play-status { color: var(--muted); font-size: 12.5px; }
 .busy { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: var(--overlay); border-radius: var(--radius-sm); }
 .busy__box { display: flex; gap: 10px; align-items: center; color: var(--muted); font-weight: 600; }
 .busy__box .identify__spinner { width: 22px; height: 22px; border-width: 3px; }
@@ -198,6 +204,11 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
               <button type="button" class="icon-btn" id="v-play" aria-label="Play" aria-pressed="false" title="Play through the times">&#9654;</button>
             </div>
             <div class="time-label" id="v-when"></div>
+            <div class="play-row">
+              <label class="g-label" for="v-speed">Speed</label>
+              <select class="s-select" id="v-speed"><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select>
+              <span class="play-status" id="v-play-status" role="status" aria-live="polite"></span>
+            </div>
           </div>
           <div class="control" id="c-level">
             <h2><label for="v-level">Depth</label></h2>
@@ -221,6 +232,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       <section class="stage card" aria-label="Map">
         <div class="plot" id="plot-wrap">
           <div id="plot"></div>
+          <div id="plot-b" class="is-back"></div>
           <div class="empty" id="plot-empty"><div><strong>Choose a variable</strong>Search for it on the left.</div></div>
           <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading the data</div></div>
         </div>
@@ -491,8 +503,10 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   let catalogue = null;
   let catalogueNumber = null;
   const COLOUR_MAPS = ["", "viridis", "cividis", "plasma", "inferno", "magma", "turbo", "RdBu_r", "coolwarm", "Blues", "YlGnBu", "gray"];
-  const pick = { names: [], stream: null, step: 0, level: 0, cmap: "", vmin: "", vmax: "", log: false, coast: false };
+  const pick = { names: [], stream: null, step: 0, level: 0, speed: "normal", cmap: "", vmin: "", vmax: "", log: false, coast: false };
   let lastClim = null;
+  // the colour scale an animation keeps: {key, vmin, vmax, cmap}, for the variables and level it was made for
+  let scale = null;
   $("v-cmap").replaceChildren(...COLOUR_MAPS.map((name) => el("option", { value: name, text: name || "Automatic (ncplot's choice)" })));
 
   async function loadCatalogue() {
@@ -507,6 +521,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     catalogue = reply;
     catalogueNumber = number;
     Object.assign(pick, { names: [], stream: null, step: 0, level: 0 });
+    scale = null;
     $("v-search").value = "";
     clearPlot();
     renderList();
@@ -620,6 +635,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   });
 
   function afterStream(before) {
+    stopPlay();
+    scale = null;
     const now = inStream();
     if (now) {
       if (!before || before.stream !== now.stream) {
@@ -722,8 +739,16 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("v-coast-label").title = state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)";
   }
 
-  // the time: the slider, the arrows and playing through them
+  // the time: the slider and the arrows
+  function updateTime(now) {
+    const stream = streamOf(now.stream);
+    $("v-step").value = String(pick.step);
+    $("v-when").textContent = stream.times[pick.step] || "";
+    $("v-prev").disabled = pick.step <= 0;
+    $("v-next").disabled = pick.step >= stream.steps - 1;
+  }
   function setStep(step) {
+    stopPlay();
     const now = inStream();
     if (!now) return;
     const stream = streamOf(now.stream);
@@ -734,26 +759,159 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   $("v-step").addEventListener("input", (event) => setStep(Number(event.target.value)));
   $("v-prev").addEventListener("click", () => setStep(pick.step - 1));
   $("v-next").addEventListener("click", () => setStep(pick.step + 1));
+
+  // ---- playing: an animation ----
+  // Frames are fetched ahead (a few at a time) and shown on a clock, so the map is never covered by a "reading"
+  // message and moves as often as the files allow, up to the speed chosen. One colour scale is used for the
+  // whole run (from a few steps spread through it), so colours mean the same in every frame. The frame
+  // after the last is the first.
+  const SPEEDS = { slow: 2, normal: 5, fast: 10 };
+  const AHEAD = 8;       // frames kept ready ahead of the one shown
+  const FETCHING = 2;    // requests at once
+  const START_WITH = 3;  // frames ready before it starts moving
   let playing = false;
+  let playRun = 0;
+  let playNext = 0;
+  const frames = new Map(); // parameters of a frame -> its reply, as a promise
+  const ready = new Set();  // those of them that are in
+  let fetching = 0;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const paramsFor = (step) => ({ ...plotParams(), step: String(step) });
+  const keyFor = (step) => JSON.stringify(paramsFor(step));
+  function fetchFrame(step) {
+    const params = paramsFor(step);
+    const key = JSON.stringify(params);
+    if (frames.has(key)) return frames.get(key);
+    fetching += 1;
+    const promise = fetch(`api/plot?${query(params)}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .catch(() => ({ ok: false, error: "ncviewer is no longer running." }))
+      .then((reply) => {
+        fetching -= 1;
+        if (reply.ok) ready.add(key); else frames.delete(key);
+        if (playing) topUp();
+        return reply;
+      });
+    frames.set(key, promise);
+    // a few frames behind the one shown are enough to go back to
+    while (frames.size > AHEAD * 2) {
+      const oldest = frames.keys().next().value;
+      frames.delete(oldest);
+      ready.delete(oldest);
+    }
+    return promise;
+  }
+  const stepsAhead = (from, count) => {
+    const total = streamOf(inStream().stream).steps;
+    return Array.from({ length: Math.min(count, total) }, (_, i) => (from + i) % total);
+  };
+  const readyAhead = (from, count) => stepsAhead(from, count).filter((step) => ready.has(keyFor(step))).length;
+  // keeps FETCHING requests going for the frames from playNext on, until AHEAD of them have been asked for
+  function topUp() {
+    if (!playing || !inStream()) return;
+    for (const step of stepsAhead(playNext, AHEAD)) {
+      if (fetching >= FETCHING) return;
+      fetchFrame(step);
+    }
+  }
+
+  const scaleKey = () => JSON.stringify([pick.names, pick.stream, pick.level]);
+  // the range of the variable over the whole run, once for the variables and level shown
+  async function ensureScale(run) {
+    if (scale && scale.key === scaleKey()) return true;
+    if (pick.vmin !== "" && pick.vmax !== "") return true;
+    const key = scaleKey();
+    $("v-play-status").textContent = "Preparing the animation…";
+    let reply;
+    try {
+      reply = await (await fetch(`api/limits?${query({ stream: String(pick.stream), vars: JSON.stringify(pick.names), level: String(pick.level) })}`, { cache: "no-store" })).json();
+    } catch (error) {
+      reply = { ok: false, error: "ncviewer is no longer running." };
+    }
+    if (run !== playRun) return false;
+    if (!reply.ok) { showPlotError(reply.error); stopPlay(); return false; }
+    scale = { key, vmin: String(reply.vmin), vmax: String(reply.vmax), cmap: reply.symmetric ? "RdBu_r" : "" };
+    return true;
+  }
+
+  function setPlaying(on) {
+    playing = on;
+    const button = $("v-play");
+    button.setAttribute("aria-pressed", String(on));
+    button.setAttribute("aria-label", on ? "Pause" : "Play");
+    button.title = on ? "Pause" : "Play through the times";
+    button.innerHTML = on ? "&#10074;&#10074;" : "&#9654;";
+    if (!on) $("v-play-status").textContent = "";
+  }
   function stopPlay() {
-    playing = false;
-    $("v-play").setAttribute("aria-pressed", "false");
-    $("v-play").innerHTML = "&#9654;";
+    playRun += 1;
+    setPlaying(false);
   }
   $("v-play").addEventListener("click", () => {
     if (playing) { stopPlay(); return; }
-    playing = true;
-    $("v-play").setAttribute("aria-pressed", "true");
-    $("v-play").innerHTML = "&#10074;&#10074;";
-    playOn();
+    startPlay();
   });
-  // the next time is asked for once the last one is drawn
-  function playOn() {
-    if (!playing) return;
+  $("v-speed").addEventListener("change", (event) => { pick.speed = event.target.value; });
+
+  async function startPlay() {
     const now = inStream();
-    if (!now) { stopPlay(); return; }
-    const stream = streamOf(now.stream);
-    setStep(pick.step >= stream.steps - 1 ? 0 : pick.step + 1);
+    if (!now) return;
+    const total = streamOf(now.stream).steps;
+    if (total < 2) return;
+    // nothing else is to draw while it plays
+    clearTimeout(plotTimer);
+    plotNumber += 1;
+    $("plot-busy").hidden = true;
+    $("plot-error").hidden = true;
+    const run = ++playRun;
+    setPlaying(true);
+    playNext = pick.step >= total - 1 ? 0 : pick.step + 1;
+    const current = () => playing && run === playRun;
+    let due = 0;
+    while (current()) {
+      if (!(await ensureScale(run))) return;
+      topUp();
+      // the first frames are waited for together, so that it starts moving smoothly
+      if (due === 0) {
+        const need = Math.min(START_WITH, total);
+        while (current() && readyAhead(playNext, need) < need) {
+          $("v-play-status").textContent = `Loading frames ${readyAhead(playNext, need)}/${need}`;
+          topUp();
+          await sleep(60);
+        }
+        if (!current()) return;
+        $("v-play-status").textContent = "";
+      }
+      const wanted = playNext;
+      // "Loading" is said only if the frame is more than a moment late
+      const late = due !== 0 && !ready.has(keyFor(wanted))
+        ? setTimeout(() => { if (current()) $("v-play-status").textContent = `Loading ${readyAhead(wanted, AHEAD)}/${AHEAD}`; }, 400)
+        : null;
+      const reply = await fetchFrame(wanted);
+      clearTimeout(late);
+      if (!current()) return;
+      if (!reply.ok) { showPlotError(reply.error); stopPlay(); return; }
+      // on time: a late frame is shown at once, and the next is not rushed to catch up
+      await sleep(Math.max(0, due - performance.now()));
+      if (!current()) return;
+      due = performance.now() + 1000 / SPEEDS[pick.speed];
+      $("v-play-status").textContent = "";
+      await showFrame(reply, wanted);
+      if (!current()) return;
+      playNext = (wanted + 1) % total;
+      topUp();
+    }
+  }
+
+  // one frame of the animation: drawn behind, then shown
+  async function showFrame(reply, step) {
+    const now = inStream();
+    if (!now) return;
+    lastClim = reply.clim || null;
+    await draw(reply.item);
+    pick.step = step;
+    updateTime(now);
   }
   document.addEventListener("keydown", (event) => {
     if (state.view !== "viewer" || $("c-time").hidden || $("v-controls").hidden) return;
@@ -780,23 +938,34 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     renderControls(inStream());
     toast("The colour scale is kept for every time until you choose Automatic.");
   });
-  $("v-auto").addEventListener("click", () => { pick.vmin = pick.vmax = ""; renderControls(inStream()); requestPlot(0); });
+  $("v-auto").addEventListener("click", () => { pick.vmin = pick.vmax = ""; scale = null; renderControls(inStream()); requestPlot(0); });
   $("v-log").addEventListener("change", (event) => { pick.log = event.target.checked; requestPlot(0); });
   $("v-coast").addEventListener("change", (event) => { pick.coast = event.target.checked; requestPlot(0); });
 
   // ---- the plots ----
   let plotNumber = 0;
   let plotTimer = null;
+  // what is asked for: the colour scale of an animation stands in for an automatic one
   function plotParams() {
+    const kept = scale && scale.key === scaleKey() ? scale : null;
     return {
       stream: String(pick.stream), vars: JSON.stringify(pick.names), step: String(pick.step), level: String(pick.level),
-      cmap: pick.cmap, vmin: pick.vmin, vmax: pick.vmax, log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
+      cmap: pick.cmap || (kept ? kept.cmap : ""),
+      vmin: pick.vmin !== "" ? pick.vmin : (kept ? kept.vmin : ""),
+      vmax: pick.vmax !== "" ? pick.vmax : (kept ? kept.vmax : ""),
+      log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
     };
   }
 
+  function showPlotError(text) {
+    $("plot-error").textContent = text;
+    $("plot-error").hidden = false;
+  }
+
   function clearPlot() {
+    stopPlay();
     plotNumber++;
-    $("plot").replaceChildren();
+    disposeFigures();
     $("plot-empty").hidden = false;
     $("plot-busy").hidden = true;
     $("plot-error").hidden = true;
@@ -808,42 +977,84 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   }
 
   function requestPlot(delay) {
+    // an animation draws its own frames
+    if (playing) return;
     clearTimeout(plotTimer);
     const number = ++plotNumber;
     $("plot-busy").hidden = false;
     plotTimer = setTimeout(async () => {
-      let reply;
-      try {
-        reply = await (await fetch(`api/plot?${query(plotParams())}`, { cache: "no-store" })).json();
-      } catch (error) {
-        reply = { ok: false, error: "ncviewer is no longer running." };
-      }
+      const reply = await fetchFrame(pick.step);
       if (number !== plotNumber) return;
       $("plot-busy").hidden = true;
       if (!reply.ok) {
-        $("plot-error").textContent = reply.error;
-        $("plot-error").hidden = false;
-        stopPlay();
+        showPlotError(reply.error);
         return;
       }
       $("plot-error").hidden = true;
       lastClim = reply.clim || null;
-      await draw("plot", reply.item);
+      await draw(reply.item);
+      if (number !== plotNumber) return;
       $("plot-empty").hidden = true;
       const now = inStream();
       if (now) renderControls(now);
-      if (playing) setTimeout(playOn, 250);
     }, delay);
   }
 
-  async function draw(target, item) {
-    const node = $(target);
-    node.replaceChildren();
-    if (window.Bokeh) {
-      await Bokeh.embed.embed_item(item, target);
-    } else {
-      node.append(el("p", { class: "stage__error", text: "Bokeh could not be loaded, so nothing can be drawn." }));
+  // Two figures are stacked: a new one is drawn in the one behind and then shown, and the one it
+  // replaces is taken apart (Bokeh keeps a view of each figure until it is told to let it go). When the
+  // variables are the same, the new figure is zoomed as the old one was.
+  let front = "plot";
+  let drawn = null;
+  const figures = { plot: [], "plot-b": [] };
+  function release(id) {
+    for (const view of figures[id]) { try { view.remove(); } catch (error) { /* already gone */ } }
+    figures[id] = [];
+    $(id).replaceChildren();
+  }
+  function disposeFigures() {
+    release("plot");
+    release("plot-b");
+    front = "plot";
+    drawn = null;
+    $("plot").classList.remove("is-back");
+    $("plot-b").classList.add("is-back");
+  }
+  async function draw(item) {
+    if (!window.Bokeh) {
+      $("plot").replaceChildren(el("p", { class: "stage__error", text: "Bokeh could not be loaded, so nothing can be drawn." }));
+      return;
     }
+    // the first figure goes straight in; after that, in the one behind
+    const first = figures[front].length === 0;
+    const back = first ? front : (front === "plot" ? "plot-b" : "plot");
+    release(back);
+    // embed_item gives a manager of the views it made: the figure is its root
+    const made = await Bokeh.embed.embed_item(item, back);
+    const views = Array.from(made.roots || made);
+    const key = JSON.stringify([pick.names, pick.stream]);
+    const old = figures[front][0], next = views[0];
+    // Bokeh sets a figure's ranges once it has drawn it: wait for that (the figure is out of sight meanwhile),
+    // or the zoom set below is undone
+    if (!first && next && next.has_finished) {
+      for (let waited = 0; waited < 1500 && !next.has_finished(); waited += 16) await sleep(16);
+    }
+    if (old && next && drawn === key && old.model && next.model && old.model.x_range && next.model.x_range) {
+      for (const axis of ["x_range", "y_range"]) {
+        const range = next.model[axis];
+        range.start = old.model[axis].start;
+        range.end = old.model[axis].end;
+        // so that auto-ranging, which may not have run yet, does not undo it (the reset tool still does)
+        range.have_updated_interactively = true;
+      }
+    }
+    figures[back] = views;
+    if (!first) {
+      $(back).classList.remove("is-back");
+      $(front).classList.add("is-back");
+      release(front);
+    }
+    front = back;
+    drawn = key;
   }
 
   // ---- following ncviewer's state ----

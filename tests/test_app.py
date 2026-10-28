@@ -98,6 +98,14 @@ def test_probe_then_view(running, simulation):
     assert _get(base, "api/plot", token=token, stream=0, vars='["votemper", "votemper"]')["ok"] is False
     assert _get(base, "api/plot", token=token, stream=0, vars="[]") == {"ok": False, "error": "Choose a variable."}
     assert _get(base, "api/plot", token=token, stream=0, vars="nonsense")["error"] == "The variables could not be read."
+    # the range over the whole run, for an animation's one colour scale
+    limits = _get(base, "api/limits", token=token, stream=1, vars='["chl"]', level=1)
+    assert limits["ok"] and limits["vmin"] < limits["vmax"] and limits["symmetric"] is False
+    app.missing = [(-1e9, 1e9)]
+    assert "Every cell is missing" in _get(base, "api/limits", token=token, stream=1, vars='["chl"]')["error"]
+    app.missing = []
+    assert _get(base, "api/limits", token=token, stream=0, vars='["votemper", "sossheig"]')["error"].endswith("cannot be added.")
+    assert _get(base, "api/limits", token=token, stream=0, vars="[]")["error"] == "Choose a variable."
     # only maps are drawn: there is no asking for a cell
     with pytest.raises(urllib.error.HTTPError):
         _get(base, "api/cell", token=token, stream=0, x=1, y=1)

@@ -93,9 +93,9 @@ def test_viewer(page, simulation):
     tab.keyboard.press("Enter")
     # in two file types: nothing is plotted until one is chosen
     assert "Which do you want?" in tab.text_content("#v-streams")
-    assert tab.locator("#plot .bk-Figure, #plot [class^=bk]").count() == 0
+    assert tab.locator("#plot-wrap [class^=bk]").count() == 0
     tab.click("#v-streams label.ptr-mode >> nth=1")
-    tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     # the calendar is not shown
     assert "Calendar" not in tab.text_content("#v-info")
@@ -107,7 +107,7 @@ def test_viewer(page, simulation):
     # nothing is written under the map
     assert tab.locator("#plot-notes, .stage__notes").count() == 0
     # the map fills its box, not a strip of axes
-    assert tab.locator("#plot .bk-Figure, #plot > div").first.bounding_box()["height"] > 300
+    assert tab.locator("#plot-wrap [class^=bk]").first.bounding_box()["height"] > 300
     tab.click("#v-next")
     tab.wait_for_function("() => document.querySelector('#v-when').textContent.startsWith('2000-02')")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
@@ -130,7 +130,7 @@ def test_sum_of_variables(page, simulation):
     row = lambda name: f"#v-list li[data-name='{name}']"  # noqa: E731
     # tick chl: ptrc_T is its only file type, so it is chosen and drawn
     tab.check(f"{row('chl')} input")
-    tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     # sossheig cannot be added to chl: not the same dimensions
     assert "is-incompatible" in tab.get_attribute(row("sossheig"), "class")
@@ -149,7 +149,108 @@ def test_sum_of_variables(page, simulation):
     assert tab.is_hidden("#v-chosen")
     # clicking a row's text chooses that one alone, and ticks only it
     tab.click(f"{row('sossheig')} .var-list__name")
-    tab.wait_for_selector("#plot [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
     assert tab.locator("#v-list li input:checked").count() == 1
     tab.click("#back")
     tab.wait_for_selector("#view-files:not([hidden])")
+
+
+def _open_chl(tab, simulation):
+    tab.fill("#f-simdir", simulation)
+    tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    tab.click("#continue")
+    tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    tab.fill("#v-search", "chl")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+
+
+def _watch_play(tab):
+    """Records the dates shown, and any time the "reading the data" cover is up, from now on."""
+    tab.evaluate("""() => {
+        window.__seen = []; window.__covered = 0;
+        const busy = document.getElementById('plot-busy');
+        new MutationObserver(() => { if (!busy.hidden) window.__covered += 1; }).observe(busy, {attributes: true});
+        const when = document.getElementById('v-when');
+        new MutationObserver(() => window.__seen.push(when.textContent.slice(0, 10)))
+            .observe(when, {childList: true, characterData: true, subtree: true});
+    }""")
+
+
+def test_play_is_an_animation(page, simulation):
+    tab, app = page
+    _open_chl(tab, simulation)
+    plots = []
+    tab.on("request", lambda request: plots.append(request.url) if "api/plot" in request.url else None)
+    _watch_play(tab)
+    tab.click("#v-play")
+    # it moves through the times, and the map is never covered or empty
+    tab.wait_for_function("() => window.__seen.length >= 4", timeout=30000)
+    assert tab.evaluate("() => window.__covered") == 0
+    assert tab.locator("#plot-wrap [class^=bk]:visible").count() > 0
+    assert tab.get_attribute("#v-play", "aria-pressed") == "true"
+    # each date is the next one in the run
+    seen = tab.evaluate("() => window.__seen")
+    assert seen[:2] == ["2000-02-15", "2000-03-16"]
+    # one colour scale for every frame that was asked for
+    scales = {tuple(url.split(name + "=")[1].split("&")[0] for name in ("vmin", "vmax")) for url in plots[1:]}
+    assert len(scales) == 1 and "" not in next(iter(scales))
+    # pausing stops it
+    tab.click("#v-play")
+    assert tab.get_attribute("#v-play", "aria-pressed") == "false"
+    settled = tab.evaluate("() => window.__seen.length")
+    tab.wait_for_timeout(800)
+    assert tab.evaluate("() => window.__seen.length") <= settled + 1
+    assert tab.is_hidden("#plot-error")
+
+
+def test_play_speed(page, simulation):
+    tab, app = page
+    _open_chl(tab, simulation)
+    assert tab.input_value("#v-speed") == "normal"
+    rates = {}
+    for speed in ("slow", "fast"):
+        tab.select_option("#v-speed", speed)
+        _watch_play(tab)
+        tab.click("#v-play")
+        tab.wait_for_timeout(3000)
+        tab.click("#v-play")
+        rates[speed] = tab.evaluate("() => window.__seen.length")
+    assert rates["fast"] > rates["slow"] + 3
+
+
+def _figure_ranges(tab, to=None):
+    """The ranges of the figure on show (and sets them first, if to is given)."""
+    return tab.evaluate("""(to) => {
+        const views = Object.values(Bokeh.index).filter((v) => v.model && v.model.type === "Figure");
+        const m = views[views.length - 1].model;
+        if (to) { [m.x_range.start, m.x_range.end, m.y_range.start, m.y_range.end] = to; }
+        return [m.x_range.start, m.x_range.end, m.y_range.start, m.y_range.end];
+    }""", to)
+
+
+def test_play_keeps_the_zoom_and_the_scale(page, simulation):
+    tab, app = page
+    _open_chl(tab, simulation)
+    assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]
+    # zoom in, then play: every frame is zoomed the same
+    _figure_ranges(tab, [2, 6, 1, 5])
+    _watch_play(tab)
+    tab.click("#v-play")
+    tab.wait_for_function("() => window.__seen.length >= 3", timeout=30000)
+    tab.click("#v-play")
+    assert _figure_ranges(tab) == [2, 6, 1, 5]
+    # only the figure on show is kept, not one for every frame
+    assert tab.evaluate("() => Object.values(Bokeh.index).filter((v) => v.model && v.model.type === 'Figure').length") == 1
+    # the scale of the animation is kept after it, so the map does not change under the user,
+    # until Automatic scale is chosen
+    assert tab.input_value("#v-vmin") == ""
+    tab.click("#v-auto")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_hidden("#plot-error")
+    # choosing a different variable starts from a fresh view
+    tab.fill("#v-search", "sossheig")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]

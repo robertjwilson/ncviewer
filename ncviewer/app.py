@@ -260,6 +260,26 @@ class App:
             traceback.print_exc()
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
 
+    def limits(self, query):
+        """The range of the variable (or sum) over the whole run, so an
+        animation can keep one colour scale: {"ok", "vmin", "vmax",
+        "symmetric"}."""
+        found = self.catalogue
+        if found is None:
+            return {"ok": False, "error": "Nothing has been read yet."}
+        try:
+            names = parse_names(query.get("vars"))
+            found.combined(query.get("stream", "0"), names)
+            got = found.limits(query.get("stream", "0"), names, int(query.get("level") or 0), self.missing)
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        except Exception as error:  # noqa: BLE001 - told to the page
+            traceback.print_exc()
+            return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+        if got is None:
+            return {"ok": False, "error": "Every cell is missing, so there is nothing to show. Check the missing values."}
+        return {"ok": True, "vmin": got[0], "vmax": got[1], "symmetric": got[2]}
+
     # ---- pages coming and going ----
 
     def touch(self, page, waiting=0):
@@ -444,6 +464,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply_json(app.summary())
         elif url.path == "/api/plot":
             self._reply_json(app.plot(query))
+        elif url.path == "/api/limits":
+            self._reply_json(app.limits(query))
         else:
             self._reply(404, b"Not found", "text/plain")
 

@@ -72,7 +72,14 @@ changed files.
   missing in the sum. If the units differ, the sum is still drawn, so check they make sense added. Below
   that is what the variable is (its
   dimensions, files and times), followed by the controls:
-  - **Time**: a slider, the arrow buttons (or the arrow keys), and Play.
+  - **Time**: a slider, the arrow buttons (or the arrow keys), and **Play**, which animates
+    the simulation from the time shown, and starts again at the beginning after the last.
+    The frames are read ahead while it plays, so the map is not covered or blanked between
+    them. It uses one colour scale for the whole run (worked out from time steps spread
+    through it, so colours mean the same in every frame), and keeps your zoom. Choose
+    **Slow**, **Normal** or **Fast** (2, 5 or 10 frames a second); it can only go as fast as
+    the files can be read, and says "Loading" if it has to wait. Moving the slider pauses
+    it. Pause leaves the colour scale as it was until you choose **Automatic scale**.
   - **Depth**: the level to show.
   - **Colours**: the colour map, fixed limits ("Keep this scale for every time"), a
     logarithmic scale, and coastlines (needs cartopy and geoviews).

@@ -448,6 +448,32 @@ class Catalogue:
         total.attrs = {"n_missing": n_missing}
         return total, (when if about["time_dim"] else None)
 
+    def limits(self, stream, names, level=0, missing=(), samples=12):
+        """The range of the variable names (or their sum) over the whole run
+        at level, from up to samples time steps spread evenly through it (one
+        slice is read for each, so a long run costs a few reads, not one for
+        every step): (low, high, symmetric), symmetric being whether the
+        values span 0 (as plotting.colour_limits says). None if every
+        sampled slice is missing."""
+        from .plotting import colour_limits
+
+        count = len(self.streams[int(stream)]["steps"])
+        if count <= samples:
+            steps = list(range(count))
+        else:
+            steps = sorted({round(i * (count - 1) / (samples - 1)) for i in range(samples)})
+        low = high = None
+        for step in steps:
+            data, _ = self.field(stream, names, step, level, missing)
+            values = data.values[np.isfinite(data.values)]
+            if values.size:
+                low = float(values.min()) if low is None else min(low, float(values.min()))
+                high = float(values.max()) if high is None else max(high, float(values.max()))
+        if low is None:
+            return None
+        (low, high), symmetric = colour_limits([low, high])
+        return low, high, symmetric
+
 
 def _bound(value, dtype):
     """value as the data's own type, so that 1e20 matches a float32 1e20
