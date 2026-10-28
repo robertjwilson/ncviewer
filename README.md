@@ -100,6 +100,22 @@ When the values span 0, the colour scale is symmetric about 0 and drawn in `RdBu
 Otherwise it is `viridis`. Very large grids are thinned out for drawing, and the page says
 so when that happens.
 
+### FVCOM output
+
+Raw FVCOM output (an unstructured mesh: the dimensions `node` and `nele`, and `nv`) is
+recognised as OceanVal recognises it. Every variable on the mesh's nodes or elements can be
+mapped. The Depth control lists its sigma layers, from Layer 1 (surface) to the bottom layer.
+The plotting uses [pyfvcom2](https://github.com/PlymouthMarineLaboratory/pyfvcom2)'s
+approach, as the page says at the bottom right. The triangles are `nv` (less 1), and a value
+on the nodes is shaded linearly across each triangle, as in its `tripcolor`. A value on the
+elements fills its triangle. As a browser cannot draw a mesh of many triangles quickly, this
+is done onto a grid of about 1000 pixels across and drawn as an image. Outside the mesh is
+blank, and so is any triangle with a missing node. The grid is worked out once for each
+mesh (under a second for 700,000 triangles), and each map after that takes a few
+milliseconds, so Play stays smooth. Zooming far into a fine part of a large mesh shows that
+grid's pixels, not the triangles. A mesh without longitudes and latitudes is drawn in its
+`x` and `y` (metres), without coastlines.
+
 ## Tests
 
 ```sh

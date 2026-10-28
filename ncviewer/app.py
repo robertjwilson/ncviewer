@@ -240,6 +240,7 @@ class App:
                 vmax=_number(query.get("vmax")),
                 log=query.get("log") == "1",
                 coast=query.get("coast") == "1",
+                mesh=found.mesh(stream) if about.get("mesh") else None,
             )
             if about["units_differ"]:
                 notes.append(

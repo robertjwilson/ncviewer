@@ -4,6 +4,7 @@ and latitude, and a regular lon-lat one."""
 
 import os
 
+import netCDF4
 import numpy as np
 import xarray as xr
 
@@ -100,3 +101,79 @@ def regular_file(path, nt=3):
     )
     ds.to_netcdf(path)
     return path
+
+
+# 2012-01-01 in FVCOM's modified julian days
+MJD_2012 = 55927
+
+
+def fvcom_mesh(cartesian=False):
+    """OceanVal's test mesh (its tests/test_fvcom.py): 0.1 degree squares over
+    5-4W, 50-51N, each two triangles, with the north-east corner cut out.
+    Returns the nodes' lon, lat and nv (three, nele), 1-based."""
+    lons = np.round(np.arange(-5.0, -3.95, 0.1), 6)
+    lats = np.round(np.arange(50.0, 51.05, 0.1), 6)
+    glon, glat = np.meshgrid(lons, lats)
+    keep = ~((glon > -4.45) & (glat > 50.55))
+    index = np.full(glon.shape, -1)
+    index[keep] = np.arange(keep.sum())
+    triangles = []
+    for j in range(len(lats) - 1):
+        for i in range(len(lons) - 1):
+            a, b = index[j, i], index[j, i + 1]
+            c, d = index[j + 1, i], index[j + 1, i + 1]
+            if min(a, b, c, d) >= 0:
+                triangles += [[a, b, d], [a, d, c]]
+    return glon[keep], glat[keep], np.array(triangles).T + 1
+
+
+def fvcom_file(path, first_day=0, n_times=3, cartesian=False):
+    """An FVCOM file of the mesh above, written as FVCOM writes them (with
+    netCDF4, as xarray will not write a 2-D variable named after one of its
+    dimensions): temp on the nodes (5 sigma layers) equal to 10 + lon + the
+    layer + the day, zeta on the nodes, u on the elements equal to the
+    element's number, h, and FVCOM's times. cartesian: lon and lat are 0,
+    and the positions are x and y in metres."""
+    lon, lat, nv = fvcom_mesh()
+    n_node, n_nele = len(lon), nv.shape[1]
+    days = first_day + np.arange(n_times)
+    siglay = np.repeat((-(np.arange(5) + 0.5) / 5)[:, None], n_node, axis=1)
+    siglev = np.repeat((-np.arange(6) / 5)[:, None], n_node, axis=1)
+    temp = 10 + lon[None, None, :] + np.arange(5)[None, :, None] + days[:, None, None]
+    lonc, latc = lon[nv - 1].mean(axis=0), lat[nv - 1].mean(axis=0)
+    with netCDF4.Dataset(path, "w") as ds:
+        for name, size in (("node", n_node), ("nele", n_nele), ("three", 3), ("siglay", 5), ("siglev", 6), ("time", None)):
+            ds.createDimension(name, size)
+
+        def add(name, dims, values, dtype="f4", **attrs):
+            variable = ds.createVariable(name, dtype, dims)
+            variable[:] = values
+            variable.setncatts(attrs)
+
+        add("x", ("node",), (lon + 5) * 70000, units="meters", long_name="nodal x-coordinate")
+        add("y", ("node",), (lat - 50) * 111000, units="meters", long_name="nodal y-coordinate")
+        add("lon", ("node",), lon * (0 if cartesian else 1), units="degrees_east", long_name="nodal longitude")
+        add("lat", ("node",), lat * (0 if cartesian else 1), units="degrees_north", long_name="nodal latitude")
+        add("lonc", ("nele",), lonc * (0 if cartesian else 1), units="degrees_east", long_name="zonal longitude")
+        add("latc", ("nele",), latc * (0 if cartesian else 1), units="degrees_north", long_name="zonal latitude")
+        add("nv", ("three", "nele"), nv, dtype="i4", long_name="nodes surrounding element")
+        add("siglay", ("siglay", "node"), siglay, long_name="Sigma Layers", positive="up")
+        add("siglev", ("siglev", "node"), siglev, long_name="Sigma Levels", positive="up")
+        add("h", ("node",), 20 + 200 * (lon + 5), units="m", long_name="Bathymetry")
+        add("time", ("time",), MJD_2012 + days, units="days since 1858-11-17 00:00:00", format="modified julian day (MJD)")
+        add("Itime", ("time",), MJD_2012 + days, dtype="i4", units="days since 1858-11-17 00:00:00")
+        # FVCOM's integer time has units xarray cannot decode
+        add("Itime2", ("time",), np.zeros(n_times), dtype="i4", units="msec since 00:00:00")
+        add("zeta", ("time", "node"), np.zeros((n_times, n_node)) + 0.5, units="meters", long_name="Water Surface Elevation")
+        add("temp", ("time", "siglay", "node"), temp, units="degrees_C", long_name="temperature")
+        add("u", ("time", "siglay", "nele"), np.broadcast_to(np.arange(n_nele, dtype="f4"), (n_times, 5, n_nele)),
+            units="meters s-1", long_name="Eastward Water Velocity")
+    return path
+
+
+def fvcom_simulation(root, files=4, cartesian=False):
+    """FVCOM output under root: files files of three days each."""
+    os.makedirs(root, exist_ok=True)
+    for number in range(files):
+        fvcom_file(os.path.join(root, f"estuary_{number + 1:04d}.nc"), first_day=3 * number, cartesian=cartesian)
+    return root

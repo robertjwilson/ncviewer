@@ -123,6 +123,9 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   padding: 10px 16px; border-radius: var(--radius-sm); background: var(--toast-bg); color: var(--bg); font-size: 13.5px; box-shadow: var(--shadow-lg);
 }
 .summary code { font-size: 12.5px; }
+/* FVCOM output is drawn in pyfvcom2's way, which the footer says */
+.credit { align-self: center; margin-right: 6px; color: var(--muted); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
+.credit:hover { color: var(--teal-700); }
 @media (max-width: 640px) { .wrap { padding: 0 16px; } .brand__word { font-size: 26px; } h1 { font-size: 17px; } }
 </style>
 <script src="bokeh.min.js"></script>
@@ -246,6 +249,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   <div class="wrap">
     <p class="summary" id="summary"></p>
     <div class="actions">
+      <a class="credit" id="fvcom-credit" href="https://github.com/PlymouthMarineLaboratory/pyfvcom2" target="_blank" rel="noopener noreferrer" hidden>Plotting based on pyfvcom2</a>
       <button type="button" class="btn btn--ghost" id="back" hidden>Back</button>
       <button type="button" class="btn btn--primary" id="continue" disabled>Continue</button>
     </div>
@@ -485,6 +489,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     }
     $("continue").hidden = state.view !== "files";
     $("back").hidden = state.view === "files";
+    $("fvcom-credit").hidden = !(state.view === "viewer" && catalogue && catalogue.streams.some((stream) => stream.fvcom));
   }
 
   // ---- reading the files ----
@@ -672,6 +677,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       const stream = streamOf(now.stream);
       info.push(["Dimensions", now.dims.map((dim, index) => `${dim} (${now.shape[index]})`).join(", "), true]);
       info.push(["File type", stream.pattern, true]);
+      if (now.mesh) info.push(["FVCOM mesh", now.mesh === "node" ? "values on the nodes" : "values on the elements (triangles)"]);
       info.push(["Files", `${stream.files}`]);
       if (stream.has_times) {
         info.push(["Times", `${stream.steps}${stream.resolution ? `, ${stream.resolution}` : ""}`]);
@@ -725,7 +731,11 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("c-level").hidden = !usesLevel;
     if (usesLevel) {
       const units = now.level_units ? ` ${now.level_units}` : "";
-      const options = now.level_values.map((value, index) => el("option", { value: String(index), text: `${typeof value === "number" ? +value.toPrecision(6) : value}${units}` }));
+      // FVCOM's sigma layers are named, as a layer is at no one depth
+      const options = now.level_values.map((value, index) => el("option", {
+        value: String(index),
+        text: now.level_labels ? now.level_labels[index] : `${typeof value === "number" ? +value.toPrecision(6) : value}${units}`,
+      }));
       $("v-level").replaceChildren(...options);
       $("v-level").value = String(pick.level);
     }

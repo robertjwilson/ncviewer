@@ -18,6 +18,7 @@ import numpy as np
 import xarray as xr
 
 from . import files as found_files
+from . import fvcom
 from . import times as file_times
 from .times import natural_key
 
@@ -100,7 +101,11 @@ def _lonlat(ds, name):
 def describe_variables(ds, time_dim):
     """{name: about} for each data variable of ds (an open xarray Dataset):
     its long_name, units, dims, sizes, which dim is time, which is vertical,
-    which are the horizontal ones, and its longitude/latitude names."""
+    which are the horizontal ones, and its longitude/latitude names. For
+    FVCOM output (see describe_fvcom), "mesh" says what of the mesh a
+    variable is on."""
+    if fvcom.looks_like_fvcom(ds):
+        return describe_fvcom(ds, time_dim)
     skip = _bounds_names(ds)
     coords = set(ds.coords)
     found = {}
@@ -134,6 +139,43 @@ def describe_variables(ds, time_dim):
     return found
 
 
+def describe_fvcom(ds, time_dim):
+    """describe_variables for FVCOM output: a variable on the mesh's nodes or
+    elements has that as its one horizontal dimension ("mesh": "node" or
+    "nele"), and its sigma layers (siglay, siglev) as its vertical, named
+    by number from the surface, as a layer is at no one depth. The mesh's
+    own variables, and those of whole numbers, are left out."""
+    found = {}
+    for name, variable in ds.data_vars.items():
+        dims = list(variable.dims)
+        mesh = fvcom.mesh_location(dims)
+        if name in fvcom.MESH_VARIABLES or variable.dtype.kind not in "fc" or mesh is None:
+            continue
+        time = time_dim if time_dim in dims else None
+        vertical = next((dim for dim in dims if dim in ("siglay", "siglev")), None)
+        levels = int(variable.sizes[vertical]) if vertical else 1
+        found[name] = {
+            "long_name": _attr(variable, "long_name") or _attr(variable, "standard_name"),
+            "units": _attr(variable, "units"),
+            "dims": dims,
+            "shape": [int(variable.sizes[dim]) for dim in dims],
+            "time_dim": time,
+            "vertical": vertical,
+            "levels": levels,
+            "level_values": list(range(1, levels + 1)) if vertical else None,
+            "level_labels": [
+                f"Layer {number}" + (" (surface)" if number == 1 else " (bottom)" if number == levels else "")
+                for number in range(1, levels + 1)
+            ] if vertical else None,
+            "level_units": "",
+            "horizontal": [mesh],
+            "mesh": mesh,
+            "lon": None,
+            "lat": None,
+        }
+    return found
+
+
 def _level_values(ds, dim):
     if dim in ds.variables and ds[dim].ndim == 1:
         try:
@@ -145,8 +187,13 @@ def _level_values(ds, dim):
 
 def open_dataset(path):
     """An xarray Dataset of path, with times left as numbers (they are read
-    by ncviewer.times, for any calendar). The caller holds LOCK."""
-    return xr.open_dataset(path, decode_times=False, cache=False)
+    by ncviewer.times, for any calendar). FVCOM's siglay and siglev, 2-D
+    variables named after one of their dimensions, which xarray refuses,
+    are left out (as OceanVal opens FVCOM output). The caller holds LOCK."""
+    try:
+        return xr.open_dataset(path, decode_times=False, cache=False)
+    except ValueError:
+        return xr.open_dataset(path, decode_times=False, cache=False, drop_variables=["siglay", "siglev"])
 
 
 # ---- the scan ----
@@ -243,13 +290,14 @@ def scan(simdir, ndown, exclude="", require="", progress=lambda **_: None, stopp
 def _stream(number, pattern, members, read):
     first = members[0]
     time_name = read[first].get("name")
-    variables, time_dim, error = {}, None, None
+    variables, time_dim, error, is_fvcom = {}, None, None, False
     try:
         with LOCK:
             with open_dataset(first) as ds:
                 if time_name and time_name in ds.variables and ds[time_name].ndim == 1:
                     time_dim = ds[time_name].dims[0]
                 variables = describe_variables(ds, time_dim)
+                is_fvcom = fvcom.looks_like_fvcom(ds)
     except Exception as problem:  # noqa: BLE001 - a stream that cannot be read is reported
         error = f"{os.path.basename(first)} could not be read: {problem}"
     # every time of the stream, in order, with the file and index it is at
@@ -283,6 +331,7 @@ def _stream(number, pattern, members, read):
         "resolution": resolution([stamp for stamp in stamps if stamp is not None]),
         "unreadable": unreadable,
         "error": error,
+        "fvcom": is_fvcom,
     }
 
 
@@ -295,6 +344,8 @@ class Catalogue:
         self.ndown = ndown
         self.streams = streams
         self._open = OrderedDict()
+        # stream -> its FVCOM mesh (see mesh)
+        self._meshes = {}
 
     # ---- what the viewer is told ----
 
@@ -320,6 +371,7 @@ class Catalogue:
                 "resolution": stream["resolution"],
                 "unreadable": stream["unreadable"],
                 "error": stream["error"],
+                "fvcom": stream.get("fvcom", False),
             })
             for name, about in stream["variables"].items():
                 if not mappable(about):
@@ -337,6 +389,8 @@ class Catalogue:
                     "level_values": about["level_values"],
                     "level_units": about["level_units"],
                     "horizontal": about["horizontal"],
+                    "mesh": about.get("mesh"),
+                    "level_labels": about.get("level_labels"),
                 })
         return {
             "simdir": self.simdir,
@@ -345,6 +399,15 @@ class Catalogue:
             "streams": streams,
             "variables": dict(sorted(variables.items(), key=lambda item: item[0].lower())),
         }
+
+    def mesh(self, stream):
+        """The FVCOM mesh of the stream (read from its first file the first
+        time it is asked for, and kept, with the raster it is drawn on)."""
+        stream = int(stream)
+        if stream not in self._meshes:
+            with LOCK:
+                self._meshes[stream] = fvcom.Mesh.read(self.streams[stream]["files"][0])
+        return self._meshes[stream]
 
     def about(self, stream, name):
         try:
@@ -501,5 +564,6 @@ def missing_mask(data, ranges):
 
 
 def mappable(about):
-    """Whether a variable can be drawn as a map: it has two horizontal dimensions."""
-    return len(about["horizontal"]) >= 2
+    """Whether a variable can be drawn as a map: it has two horizontal
+    dimensions, or is on an FVCOM mesh."""
+    return len(about["horizontal"]) >= 2 or bool(about.get("mesh"))

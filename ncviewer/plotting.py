@@ -16,6 +16,7 @@ import holoviews as hv
 import hvplot.xarray  # noqa: F401 - registers .hvplot
 import numpy as np
 import pandas as pd
+import xarray as xr
 from bokeh.embed import json_item
 
 # a quadmesh of more cells than this is thinned out to it, as a browser draws each cell
@@ -109,10 +110,32 @@ def coastline_scale(lon, lat):
     return "110m"
 
 
-def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=False, coast=False):
+def mesh_image(data, about, mesh):
+    """A slice of a variable on an FVCOM mesh (one value for each node or
+    element) as a 2-D DataArray on the mesh's Raster (see ncviewer.fvcom),
+    with the about that draws it: its axes as longitude and latitude, or x
+    and y in metres. Also the note saying so."""
+    raster = mesh.raster()
+    image = raster.image(np.asarray(data.values).ravel(), about["mesh"])
+    y, x = ("y", "x") if mesh.cartesian else ("lat", "lon")
+    drawn = xr.DataArray(image, dims=(y, x), coords={y: raster.y_axis, x: raster.x_axis}, name=data.name)
+    about = dict(about, horizontal=[y, x], lon=x, lat=y, cartesian=mesh.cartesian)
+    where = "nodes, shaded across each triangle" if about["mesh"] == "node" else "elements, each filling its triangle"
+    note = (
+        f"FVCOM's mesh of {mesh.nodes:,} nodes and {mesh.elements:,} triangles, the values on its {where}, "
+        f"drawn on a grid of {raster.shape[1]} by {raster.shape[0]}."
+    )
+    return drawn, about, note
+
+
+def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=False, coast=False, mesh=None):
     """The map of a 2-D slice (see Catalogue.field), as (json_item, notes,
-    the colour scale's limits)."""
+    the colour scale's limits). A slice of a variable on an FVCOM mesh is
+    drawn as an image of the mesh (mesh_image), and needs its mesh."""
     notes = []
+    if about.get("mesh"):
+        data, about, note = mesh_image(data, about, mesh)
+        notes.append(note)
     data = data.squeeze(drop=True).astype("float64")
     data.name = name
     lon, lat = about.get("lon"), about.get("lat")
@@ -160,14 +183,19 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
         x=x, y=y, cmap=colour, clim=(low, high), logz=log, title=title,
         tools=["hover"], responsive=True, colorbar=True, clabel=about.get("units") or None,
     )
-    geographic = coast and lon is not None and has_geoviews()
-    if coast and lon is not None and not geographic:
+    cartesian = about.get("cartesian", False)
+    geographic = coast and lon is not None and not cartesian and has_geoviews()
+    if coast and cartesian:
+        notes.append("The mesh is in metres, not longitude and latitude, so there are no coastlines.")
+    elif coast and lon is not None and not geographic:
         notes.append("Coastlines need cartopy and geoviews installed.")
     if geographic:
         options.update(geo=True, coastline=coastline_scale(data[x].values, data[y].values))
     else:
         options.update(xlabel=x, ylabel=y)
-        if lon is not None:
+        if cartesian:
+            options.update(xlabel="x (m)", ylabel="y (m)")
+        elif lon is not None:
             options.update(xlabel="Longitude", ylabel="Latitude")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

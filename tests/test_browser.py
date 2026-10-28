@@ -2,6 +2,8 @@
 folders' layout, Continue reads the files, and the viewer maps a variable
 once its file type is chosen. Skipped where Chromium is not installed."""
 
+import os
+
 import pytest
 
 from ncviewer import app as ncapp
@@ -254,3 +256,46 @@ def test_play_keeps_the_zoom_and_the_scale(page, simulation):
     tab.keyboard.press("Enter")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]
+
+
+def test_fvcom_output(page, tmp_path):
+    from simulations import fvcom_simulation
+
+    tab, app = page
+    root = fvcom_simulation(str(tmp_path / "fvcom"))
+    tab.fill("#f-simdir", root)
+    tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    tab.click("#continue")
+    tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    # pyfvcom2, whose way the mesh is drawn, is credited at the bottom right
+    credit = tab.locator("#fvcom-credit")
+    assert credit.is_visible() and credit.text_content() == "Plotting based on pyfvcom2"
+    assert credit.get_attribute("href") == "https://github.com/PlymouthMarineLaboratory/pyfvcom2"
+    tab.fill("#v-search", "temperature")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_hidden("#plot-error")
+    assert "values on the nodes" in tab.text_content("#v-info")
+    # the sigma layers, by name
+    assert tab.locator("#v-level option").all_text_contents() == ["Layer 1 (surface)", "Layer 2", "Layer 3", "Layer 4", "Layer 5 (bottom)"]
+    tab.select_option("#v-level", "4")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_hidden("#plot-error")
+    tab.screenshot(path=os.environ.get("NCVIEWER_SCREENSHOT", "/dev/null"), type="png")
+    # it plays
+    _watch_play(tab)
+    tab.click("#v-play")
+    tab.wait_for_function("() => window.__seen.length >= 3", timeout=30000)
+    tab.click("#v-play")
+    assert tab.is_hidden("#plot-error")
+    # a variable on the elements
+    tab.fill("#v-search", "velocity")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert "values on the elements" in tab.text_content("#v-info")
+    assert tab.is_hidden("#plot-error")
+    # not for other output
+    tab.click("#back")
+    tab.wait_for_selector("#view-files:not([hidden])")
+    assert tab.is_hidden("#fvcom-credit")
