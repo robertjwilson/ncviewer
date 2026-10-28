@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: ncviewer.yml
+          cache-environment: true
+      - name: Install ncviewer
+        run: pip install .
+      - name: Install a browser for the browser tests
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Test
+        run: python -m pytest -v

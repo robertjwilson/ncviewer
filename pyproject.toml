@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ncviewer"
+version = "0.1.0"
+description = "A browser window for looking at the contents of model simulation output"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "xarray",
+    "netCDF4",
+    "h5py",
+    "cftime",
+    "bokeh>=3.1",
+    "holoviews",
+    "hvplot",
+]
+
+[project.optional-dependencies]
+coast = ["cartopy", "geoviews"]
+test = ["pytest", "playwright"]
+
+[project.scripts]
+ncviewer = "ncviewer.app:main"
+
+[tool.setuptools]
+packages = ["ncviewer"]
+
+[tool.setuptools.package-data]
+ncviewer = ["data/*"]

@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ncviewer</title>
+<style>
+/*__NCVIEWER_GUI_CSS__*/
+
+/* ---- ncviewer's own ---- */
+.brand__word { font-size: 32px; }
+h1 { font-size: 21px; }
+.banner {
+  display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; padding: 12px 14px;
+  border: 1px solid var(--red-line); border-radius: var(--radius-sm); background: var(--red-bg); color: var(--red); font-weight: 600;
+}
+
+/* page 1: where the files are (as OceanVal's setup page) */
+.files-card { padding: 22px 24px; }
+.files-card .g-label.is-required { color: var(--ink); font-size: 14px; font-weight: 600; }
+.path-row { display: grid; gap: 6px; }
+.ndown-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 22px; }
+.ndown-row > .g-label { margin: 0; }
+.ndown-row > .s-input { width: 84px; text-align: center; }
+.ndown-found { padding: 6px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--teal-50); color: var(--teal-700); font-weight: 600; }
+.ndown-found.is-finding { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); background: transparent; }
+.identify__spinner { flex: none; width: 40px; height: 40px; border: 4px solid var(--teal-200); border-top-color: var(--teal-600); border-radius: 50%; animation: spin 0.9s linear infinite; }
+.ndown-found .identify__spinner { width: 14px; height: 14px; border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .identify__spinner { animation: none !important; } }
+.group__line.is-detected { color: var(--amber); font-weight: 600; }
+.group__line.is-nofiles { color: var(--red); font-weight: 700; font-size: 20px; line-height: 1.3; }
+.s-input.is-detected { border-color: var(--amber); background-color: var(--amber-bg); color: var(--amber); font-weight: 600; }
+.filters { margin-top: 20px; }
+.filters summary { cursor: pointer; color: var(--teal-700); font-weight: 600; font-size: 13.5px; }
+.filters__boxes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+@media (max-width: 640px) { .filters__boxes { grid-template-columns: 1fr; } }
+
+/* reading the files */
+.prepare { display: grid; place-items: center; min-height: 50vh; }
+.prepare__card { display: grid; justify-items: center; gap: 14px; max-width: 520px; padding: 32px 36px; text-align: center; }
+.prepare__card h2 { margin: 0; font: 600 20px/1.3 var(--font-head); }
+.prepare__card p { margin: 0; color: var(--muted); }
+.meter { width: 100%; height: 8px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
+.meter > span { display: block; height: 100%; width: 0; background: var(--teal-500); transition: width 0.2s; }
+
+/* page 2: the viewer */
+body.is-viewer main.wrap { max-width: none; padding: 16px; }
+.viewer { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .viewer { grid-template-columns: 1fr; } }
+.side { display: grid; gap: 16px; padding: 16px; max-height: calc(100vh - 170px); overflow-y: auto; position: sticky; top: 16px; }
+@media (max-width: 860px) { .side { position: static; max-height: none; } }
+.side h2 { margin: 0 0 6px; font: 600 13px/1.3 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.search { position: relative; }
+.var-list { margin: 8px 0 0; padding: 4px; list-style: none; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.var-list li { display: grid; gap: 1px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; }
+.var-list li:hover, .var-list li.is-active { background: var(--teal-50); }
+.var-list li.is-chosen { background: var(--teal-100); box-shadow: inset 3px 0 0 var(--teal-600); }
+.var-list__name { font: 600 13px/18px var(--font-mono); color: var(--ink); overflow-wrap: anywhere; }
+.var-list__long { font-size: 12.5px; color: var(--muted); }
+.var-list__more { font-size: 11.5px; color: var(--teal-700); font-weight: 600; }
+.var-list__none { padding: 8px; color: var(--muted); font-size: 13px; cursor: default !important; }
+.info { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; margin: 0; font-size: 12.5px; }
+.info dt { color: var(--muted); }
+.info dd { margin: 0; overflow-wrap: anywhere; }
+.info dd.is-mono { font-family: var(--font-mono); font-size: 12px; }
+.streams { display: grid; gap: 8px; }
+.streams__ask { margin: 0; color: var(--coral-dark); font-weight: 600; font-size: 13px; }
+.ptr-mode { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 13px; }
+.ptr-mode small { display: block; color: var(--muted); font-weight: 500; }
+.ptr-mode code { font-size: 12px; overflow-wrap: anywhere; }
+.segmented { display: flex; flex-wrap: wrap; gap: 6px; }
+.segmented button {
+  padding: 6px 10px; border: 2px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--ink-soft);
+  font: 600 12.5px/1 var(--font-body); cursor: pointer;
+}
+.segmented button:hover { border-color: var(--teal-200); }
+.segmented button[aria-pressed="true"] { border-color: var(--teal-600); background: var(--teal-600); color: #fff; font-weight: 700; }
+.segmented button:focus-visible { outline: none; box-shadow: var(--focus); }
+.control { display: grid; gap: 6px; }
+.time-row { display: flex; gap: 6px; align-items: center; }
+.time-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--teal-600); }
+.icon-btn { flex: none; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--ink-soft); cursor: pointer; font: 600 14px/1 var(--font-body); }
+.icon-btn:hover { border-color: var(--line-strong); background: var(--bg-alt); }
+.icon-btn[aria-pressed="true"] { background: var(--teal-600); border-color: var(--teal-600); color: #fff; }
+.icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.time-label { font: 500 13px/1.3 var(--font-mono); color: var(--ink); }
+.cell-text { margin: 0; font-size: 13px; }
+.cell-text.is-none { color: var(--muted); }
+.colour-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.colour-grid .is-wide { grid-column: 1 / -1; }
+.scale-links { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.ticks { gap: 6px 16px; }
+.tick-label input { accent-color: var(--teal-600); }
+.tick-label.is-off { color: var(--muted-light); cursor: not-allowed; }
+
+.stage { display: flex; flex-direction: column; min-height: calc(100vh - 170px); padding: 12px; }
+.stage__plots { position: relative; display: grid; grid-template-rows: minmax(420px, 1fr) auto; gap: 12px; flex: 1; }
+.plot { position: relative; min-height: 420px; height: 100%; }
+.plot > div { width: 100%; height: 100%; }
+.point { position: relative; height: 280px; border-top: 1px solid var(--line); padding-top: 8px; }
+.point__close { position: absolute; top: 4px; right: 44px; z-index: 3; height: 28px; }
+.point__plot { width: 100%; height: 100%; }
+.point__plot > div { width: 100%; height: 100%; }
+.busy { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: var(--overlay); border-radius: var(--radius-sm); }
+.busy__box { display: flex; gap: 10px; align-items: center; color: var(--muted); font-weight: 600; }
+.busy__box .identify__spinner { width: 22px; height: 22px; border-width: 3px; }
+.empty { display: grid; place-items: center; height: 100%; min-height: 420px; color: var(--muted); text-align: center; padding: 20px; }
+.empty strong { display: block; color: var(--ink); font: 600 18px/1.3 var(--font-head); margin-bottom: 6px; }
+.stage__notes { margin: 8px 0 0; display: grid; gap: 2px; color: var(--muted); font-size: 12.5px; }
+.stage__notes .is-warn { color: var(--coral-dark); }
+.stage__error { margin: 8px 0 0; color: var(--red); font-weight: 600; font-size: 13px; }
+.toast {
+  position: fixed; left: 50%; bottom: 84px; z-index: 50; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
+  padding: 10px 16px; border-radius: var(--radius-sm); background: var(--toast-bg); color: var(--bg); font-size: 13.5px; box-shadow: var(--shadow-lg);
+}
+.summary code { font-size: 12.5px; }
+@media (max-width: 640px) { .wrap { padding: 0 16px; } .brand__word { font-size: 26px; } h1 { font-size: 17px; } }
+</style>
+<script src="bokeh.min.js"></script>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <div class="brand"><span class="brand__word">nc<span>viewer</span></span></div>
+    <h1 id="title">Where is your simulation's output?</h1>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section id="view-files" hidden>
+    <div class="banner" id="files-error" role="alert" hidden></div>
+    <p class="lede">Say where the netCDF files of a simulation are. ncviewer finds every file, works out its <strong>file type</strong> (the files that differ only in their dates), and reads the <strong>variables</strong> and <strong>times</strong> they hold. Nothing is changed.</p>
+    <form class="card files-card" id="files-form" novalidate autocomplete="off">
+      <div class="path-row">
+        <label class="g-label is-required" for="f-simdir">Which directory stores your simulation output?</label>
+        <input class="s-input is-mono" id="f-simdir" list="f-simdir-folders" placeholder="/path/to/simulation/output" spellcheck="false" autocapitalize="off">
+        <datalist id="f-simdir-folders"></datalist>
+      </div>
+      <div class="ndown-row">
+        <label class="g-label is-required" for="f-ndown">How many directories below this are the files?</label>
+        <input class="s-input is-num" id="f-ndown" inputmode="numeric" placeholder="e.g. 2" spellcheck="false" autocapitalize="off">
+        <span class="ndown-found" id="ndown-found" role="status" hidden></span>
+        <span id="ndown-layout" hidden></span>
+      </div>
+      <details class="filters" id="filters">
+        <summary>File filters (optional)</summary>
+        <div class="filters__boxes">
+          <label class="g-row"><span class="g-label">Skip file names containing <span class="g-note">(separate words with a space)</span></span><input class="s-input is-mono" id="f-exclude" placeholder="e.g. 5d" spellcheck="false" autocapitalize="off"></label>
+          <label class="g-row"><span class="g-label">Only include file names containing <span class="g-note">(separate words with a space)</span></span><input class="s-input is-mono" id="f-require" placeholder="e.g. grid_T" spellcheck="false" autocapitalize="off"></label>
+        </div>
+      </details>
+      <p class="group__msg" id="m-files"></p>
+      <button type="submit" hidden></button>
+    </form>
+  </section>
+
+  <section id="view-scanning" class="prepare" hidden>
+    <div class="card prepare__card" role="status" aria-live="polite">
+      <span class="identify__spinner" aria-hidden="true"></span>
+      <h2>Identifying the files, variables and times</h2>
+      <div class="meter" aria-hidden="true"><span id="scan-meter"></span></div>
+      <p id="scan-text">Please wait!</p>
+    </div>
+  </section>
+
+  <section id="view-viewer" hidden>
+    <div class="viewer">
+      <aside class="side card" aria-label="What to plot">
+        <div>
+          <h2><label for="v-search">Variable</label></h2>
+          <div class="search">
+            <input class="s-input" id="v-search" type="search" placeholder="Search by name or description" spellcheck="false" autocapitalize="off" autocomplete="off" aria-controls="v-list">
+          </div>
+          <ul class="var-list" id="v-list" role="listbox" aria-label="Variables"></ul>
+        </div>
+        <div id="v-chosen" hidden>
+          <h2>About it</h2>
+          <dl class="info" id="v-info"></dl>
+        </div>
+        <div id="v-streams" class="streams" hidden></div>
+        <div id="v-controls" class="streams" hidden>
+          <div class="control">
+            <h2>Plot</h2>
+            <div class="segmented" id="v-kind" role="group" aria-label="Plot"></div>
+          </div>
+          <div class="control" id="c-time">
+            <h2><label for="v-step">Time</label></h2>
+            <div class="time-row">
+              <button type="button" class="icon-btn" id="v-prev" aria-label="Previous time" title="Previous time (left arrow)">&#8249;</button>
+              <input type="range" id="v-step" min="0" max="0" value="0">
+              <button type="button" class="icon-btn" id="v-next" aria-label="Next time" title="Next time (right arrow)">&#8250;</button>
+              <button type="button" class="icon-btn" id="v-play" aria-label="Play" aria-pressed="false" title="Play through the times">&#9654;</button>
+            </div>
+            <div class="time-label" id="v-when"></div>
+          </div>
+          <div class="control" id="c-level">
+            <h2><label for="v-level">Depth</label></h2>
+            <select class="s-select" id="v-level"></select>
+          </div>
+          <div class="control" id="c-cell">
+            <h2>Point</h2>
+            <p class="cell-text" id="v-cell"></p>
+          </div>
+          <div class="control" id="c-colour">
+            <h2>Colours</h2>
+            <div class="colour-grid">
+              <label class="is-wide"><span class="g-label">Colour map</span><select class="s-select" id="v-cmap"></select></label>
+              <label><span class="g-label">Minimum</span><input class="s-input is-num" id="v-vmin" inputmode="decimal" placeholder="auto"></label>
+              <label><span class="g-label">Maximum</span><input class="s-input is-num" id="v-vmax" inputmode="decimal" placeholder="auto"></label>
+              <div class="is-wide scale-links"><button type="button" class="link" id="v-keep">Keep this scale for every time</button><button type="button" class="link" id="v-auto">Automatic scale</button></div>
+            </div>
+            <div class="ticks">
+              <label class="tick-label"><input type="checkbox" id="v-log"> Logarithmic</label>
+              <label class="tick-label" id="v-coast-label"><input type="checkbox" id="v-coast"> Coastlines</label>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <section class="stage card" aria-label="Plot">
+        <div class="stage__plots">
+          <div class="plot" id="plot-wrap">
+            <div id="plot"></div>
+            <div class="empty" id="plot-empty"><div><strong>Choose a variable</strong>Search for it on the left.</div></div>
+            <div class="busy" id="plot-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span><span id="plot-busy-text">Reading the data</span></div></div>
+          </div>
+          <div class="point" id="point" hidden>
+            <button type="button" class="btn btn--text point__close" id="point-close">Close</button>
+            <div class="point__plot" id="point-plot"></div>
+            <div class="busy" id="point-busy" hidden><div class="busy__box"><span class="identify__spinner" aria-hidden="true"></span>Reading every file at this point</div></div>
+          </div>
+        </div>
+        <p class="stage__error" id="plot-error" role="alert" hidden></p>
+        <div class="stage__notes" id="plot-notes"></div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<footer class="bar" id="bar">
+  <div class="wrap">
+    <p class="summary" id="summary"></p>
+    <div class="actions">
+      <button type="button" class="btn btn--ghost" id="back" hidden>Back</button>
+      <button type="button" class="btn btn--primary" id="continue" disabled>Continue</button>
+    </div>
+  </div>
+</footer>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script id="state" type="application/json">__NCVIEWER_STATE__</script>
+<script>/*__NCVIEWER_GUI_JS__*/</script>
+<script>
+(() => {
+  "use strict";
+  const { $, el, icon, plural, toast, pageId, tellVisibility, withChoices, shorten } = GUI;
+  let state = JSON.parse($("state").textContent);
+  const token = state.token;
+
+  // ---- talking to ncviewer ----
+  const query = (params) => new URLSearchParams({ token, page: pageId, ...params }).toString();
+
+  async function post(path, body = {}) {
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-NCViewer-Token": token },
+        body: JSON.stringify(body),
+      });
+      return await response.json();
+    } catch (error) {
+      return { ok: false, error: "ncviewer is no longer running." };
+    }
+  }
+
+  function line(text, kind) {
+    return el("span", { class: `group__line${kind ? ` is-${kind}` : ""}` }, kind === "error" || kind === "nofiles" ? icon("error") : null, el("span", { text }));
+  }
+
+  // ---- page 1: where the files are (as OceanVal's setup page) ----
+  function depthText(depth) {
+    return depth === 0 ? "in the directory itself" : `${depth} director${depth === 1 ? "y" : "ies"} down`;
+  }
+  // a box for how many directories down the files are: 0 to 5 can be picked from the list the arrow
+  // in the box opens (GUI.withChoices), and any whole number can still be typed
+  const DEPTHS = [0, 1, 2, 3, 4, 5];
+  function depthBox(input) {
+    input.classList.add("is-depth");
+    input.choiceHints = Object.fromEntries(DEPTHS.map((depth) => [depth, depthText(depth).replace(/^\d+ /, "")]));
+    return withChoices(input, DEPTHS);
+  }
+
+  const FIELDS = ["simdir", "ndown", "exclude", "require"];
+  const setup = { ...state.setup };
+  for (const name of FIELDS) $(`f-${name}`).value = setup[name] || "";
+  if (setup.exclude || setup.require) $("filters").open = true;
+  depthBox($("f-ndown"));
+  let probe = null;
+  let probeNumber = 0;
+  let probeTimer = null;
+  // true from the edit of a box the check reads until its answer (or failure) is in
+  let probePending = false;
+  // whether the directories down were filled in from the folders' layout (so can change with it)
+  let autoNdown = false;
+
+  for (const name of FIELDS) {
+    $(`f-${name}`).addEventListener("input", (event) => {
+      setup[name] = event.target.value;
+      if (name === "ndown") autoNdown = false;
+      askProbe(400);
+    });
+  }
+  $("files-form").addEventListener("submit", (event) => { event.preventDefault(); goOn(); });
+
+  function askProbe(delay) {
+    clearTimeout(probeTimer);
+    // the number is taken now, not when the timer fires, so an answer to an earlier check
+    // that is still on its way is dropped rather than shown in place of "Finding files"
+    const number = ++probeNumber;
+    probePending = true;
+    refreshFiles();
+    probeTimer = setTimeout(async () => {
+      let found;
+      try {
+        const response = await fetch(`api/probe?${query({
+          simdir: setup.simdir || "", ndown: setup.ndown || "", exclude: setup.exclude || "", require: setup.require || "",
+        })}`, { cache: "no-store" });
+        found = await response.json();
+      } catch (error) {
+        if (number === probeNumber) { probePending = false; refreshFiles(); }
+        return;
+      }
+      // a later check has been asked for since
+      if (number !== probeNumber) return;
+      probePending = false;
+      probe = found;
+      useProbe();
+      refreshFiles();
+    }, delay);
+  }
+
+  function useProbe() {
+    if (!probe) return;
+    $("f-simdir-folders").replaceChildren(...(probe.folders || []).map((folder) => el("option", { value: folder })));
+    // how many directories down the files are, if the folders' layout says
+    const blank = !String(setup.ndown || "").trim();
+    const layout = probe.layout;
+    if (layout && (blank || autoNdown)) {
+      autoNdown = true;
+      if (String(setup.ndown) !== String(layout.ndown)) {
+        setup.ndown = $("f-ndown").value = String(layout.ndown);
+        askProbe(0);
+      }
+    } else if (!layout && autoNdown) {
+      autoNdown = false;
+      setup.ndown = $("f-ndown").value = "";
+      askProbe(0);
+    }
+  }
+
+  function filesProblem() {
+    const simdir = String(setup.simdir || "").trim();
+    const ndown = String(setup.ndown || "").trim();
+    if (!simdir) return { field: "simdir", text: "" };
+    if (probe && !probePending && probe.directory === "missing") return { field: "simdir", text: "That directory cannot be found." };
+    if (ndown && !/^\d+$/.test(ndown)) return { field: "ndown", text: "The number of directories down is a whole number, 0 or more." };
+    if (!ndown) return { field: "ndown", text: "" };
+    return null;
+  }
+
+  function refreshFiles() {
+    const problem = filesProblem();
+    for (const name of ["simdir", "ndown"]) {
+      const invalid = Boolean(problem && problem.field === name && problem.text);
+      $(`f-${name}`).classList.toggle("is-invalid", invalid);
+      $(`f-${name}`).setAttribute("aria-invalid", String(invalid));
+    }
+    const lines = [];
+    if (problem && problem.text) lines.push(line(problem.text, "error"));
+    // while the files are being looked for, the last answer is not shown
+    const finding = probePending && Boolean(String(setup.simdir || "").trim());
+    let counted = "";
+    if (!finding && !problem && probe && probe.directory === "found") {
+      const depth = probe.ndown;
+      const filtered = probe.all_files !== null && probe.all_files !== probe.files;
+      if (probe.files > 0) {
+        counted = filtered
+          ? `${probe.files} of the ${probe.all_files} netCDF files found pass the file filters`
+          : `${probe.files} netCDF file${probe.files === 1 ? "" : "s"} found`;
+      } else if (depth !== null && probe.all_files > 0) {
+        lines.push(line(`None of the ${probe.all_files} netCDF files ${depthText(depth)} pass the file filters.`, "nofiles"));
+      } else if (depth !== null) {
+        lines.push(line(`No netCDF files ${depthText(depth)}.`, "nofiles"));
+      }
+    }
+    // the depth was filled in from the layout of the folders: amber, as an assumption to check
+    const detected = autoNdown && !finding && Boolean(probe && probe.layout) && probe.directory === "found";
+    $("f-ndown").classList.toggle("is-detected", detected);
+    const layoutBadge = $("ndown-layout");
+    layoutBadge.replaceChildren(...(detected ? [line(`Folder structure was identified as ${probe.layout.pattern}`, "detected")] : []));
+    layoutBadge.hidden = !detected;
+    const badge = $("ndown-found");
+    badge.classList.toggle("is-finding", finding);
+    if (finding) badge.replaceChildren(el("span", { class: "identify__spinner", "aria-hidden": "true" }), "Finding files");
+    else badge.textContent = counted;
+    badge.hidden = !finding && !counted;
+    $("m-files").replaceChildren(...lines);
+    const ready = !finding && !problem && probe && probe.directory === "found" && probe.files > 0;
+    $("continue").disabled = !ready;
+    $("continue").title = ready ? "" : "Say where the files are first";
+    renderBar();
+  }
+
+  async function goOn() {
+    if ($("continue").disabled) return;
+    $("continue").disabled = true;
+    const reply = await post("api/continue", setup);
+    if (!reply.ok) {
+      showError(reply.error || "The files could not be read.");
+      refreshFiles();
+    }
+  }
+  $("continue").addEventListener("click", goOn);
+  $("back").addEventListener("click", async () => { stopPlay(); await post("api/back"); });
+
+  function showError(text) {
+    const banner = $("files-error");
+    banner.replaceChildren(...(text ? [icon("error"), el("span", { text })] : []));
+    banner.hidden = !text;
+  }
+
+  // ---- the footer ----
+  function renderBar() {
+    const summary = $("summary");
+    if (state.view === "viewer" && catalogue) {
+      summary.replaceChildren(
+        el("span", {}, el("b", { text: plural(catalogue.files, "file") }), ` in ${plural(catalogue.streams.length, "file type")} under `),
+        el("code", { text: shorten(catalogue.simdir, 64), title: catalogue.simdir }),
+      );
+    } else if (state.view === "files") {
+      summary.replaceChildren(el("span", { text: "Continue reads the variables and times of every file." }));
+    } else {
+      summary.replaceChildren();
+    }
+    $("continue").hidden = state.view !== "files";
+    $("back").hidden = state.view === "files";
+  }
+
+  // ---- reading the files ----
+  function renderScan() {
+    const scan = state.scan || { phase: "files", done: 0, total: 0 };
+    const share = scan.total ? Math.round((100 * scan.done) / scan.total) : 0;
+    $("scan-meter").style.width = `${share}%`;
+    $("scan-text").textContent = scan.phase === "times"
+      ? `Reading the times of the files: ${scan.done} of ${scan.total}`
+      : scan.phase === "variables"
+        ? `Reading the variables of each file type: ${scan.done} of ${scan.total}`
+        : "Finding the files";
+  }
+
+  // ---- page 2: the viewer ----
+  let catalogue = null;
+  let catalogueNumber = null;
+  const COLOUR_MAPS = ["", "viridis", "cividis", "plasma", "inferno", "magma", "turbo", "RdBu_r", "coolwarm", "Blues", "YlGnBu", "gray"];
+  const KIND_NAMES = { map: "Map", line: "Along the grid", series: "Time series", profile: "Profile", hovmoller: "Depth against time" };
+  const pick = {
+    name: null, stream: null, kind: null, step: 0, level: 0, cell: null, position: null,
+    cmap: "", vmin: "", vmax: "", log: false, coast: false,
+  };
+  let lastClim = null;
+  // what the map's axes are: "lonlat" or "index" (the grid's own), for the cell a click is at
+  let lastAxes = "lonlat";
+  $("v-cmap").replaceChildren(...COLOUR_MAPS.map((name) => el("option", { value: name, text: name || "Automatic (ncplot's choice)" })));
+
+  async function loadCatalogue() {
+    const number = state.catalogue_number;
+    let reply;
+    try {
+      reply = await (await fetch(`api/catalogue?${query({})}`, { cache: "no-store" })).json();
+    } catch (error) {
+      return;
+    }
+    if (!reply.ok) return;
+    catalogue = reply;
+    catalogueNumber = number;
+    Object.assign(pick, { name: null, stream: null, kind: null, step: 0, level: 0, cell: null, position: null });
+    $("v-search").value = "";
+    clearPlot();
+    renderList();
+    renderSide();
+    renderBar();
+    $("v-search").focus();
+    const unreadable = catalogue.streams.reduce((sum, stream) => sum + stream.unreadable, 0);
+    if (unreadable) toast(`The times of ${plural(unreadable, "file")} could not be read.`);
+  }
+
+  const words = (text) => String(text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  let listActive = -1;
+  function matching() {
+    const wanted = words($("v-search").value);
+    return Object.entries(catalogue.variables).filter(([name, about]) => {
+      const text = `${name} ${about.long_name} ${about.units}`.toLowerCase();
+      return wanted.every((word) => text.includes(word));
+    });
+  }
+  function renderList() {
+    if (!catalogue) return;
+    const found = matching();
+    listActive = Math.min(listActive, found.length - 1);
+    const items = found.map(([name, about], index) => el("li", {
+      role: "option", "data-name": name,
+      class: `${name === pick.name ? "is-chosen" : ""}${index === listActive ? " is-active" : ""}`,
+      "aria-selected": String(name === pick.name),
+      onclick: () => choose(name),
+    },
+      el("span", { class: "var-list__name", text: name }),
+      about.long_name || about.units ? el("span", { class: "var-list__long", text: [about.long_name, about.units && `(${about.units})`].filter(Boolean).join(" ") }) : null,
+      about.streams.length > 1 ? el("span", { class: "var-list__more", text: `In ${about.streams.length} file types` }) : null,
+    ));
+    $("v-list").replaceChildren(...(items.length ? items : [el("li", { class: "var-list__none", text: "No variable matches that." })]));
+  }
+  $("v-search").addEventListener("input", () => { listActive = 0; renderList(); });
+  $("v-search").addEventListener("keydown", (event) => {
+    const found = matching();
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!found.length) return;
+      listActive = (listActive + (event.key === "ArrowDown" ? 1 : -1) + found.length) % found.length;
+      renderList();
+      const active = $("v-list").querySelector(".is-active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const chosen = found[Math.max(0, listActive)];
+      if (chosen) choose(chosen[0]);
+    }
+  });
+
+  const streamOf = (id) => catalogue.streams.find((stream) => stream.id === id);
+  // the variable as it is in the chosen file type
+  function inStream() {
+    if (!pick.name || pick.stream === null) return null;
+    return catalogue.variables[pick.name].streams.find((entry) => entry.stream === pick.stream) || null;
+  }
+
+  function choose(name) {
+    const before = inStream();
+    pick.name = name;
+    const streams = catalogue.variables[name].streams;
+    // the file type is the user's to say if the variable is in more than one
+    pick.stream = streams.length === 1 ? streams[0].stream : (streams.some((entry) => entry.stream === pick.stream) ? pick.stream : null);
+    afterStream(before);
+  }
+
+  function afterStream(before) {
+    const now = inStream();
+    if (now) {
+      if (!now.kinds.includes(pick.kind)) pick.kind = now.kinds[0];
+      if (!before || before.stream !== now.stream) {
+        // the time as near the one shown as the new file type has
+        const shown = before ? streamOf(before.stream).times[pick.step] : null;
+        const times = streamOf(now.stream).times;
+        pick.step = shown ? Math.max(0, times.findIndex((time) => time >= shown)) : 0;
+        if (pick.step < 0) pick.step = 0;
+      }
+      if (pick.level >= now.levels) pick.level = 0;
+      // a cell of another grid means nothing on this one
+      if (!before || String(before.shape.slice(-2)) !== String(now.shape.slice(-2)) || String(before.horizontal) !== String(now.horizontal)) {
+        pick.cell = null;
+        pick.position = null;
+        hidePoint();
+      }
+    } else {
+      clearPlot();
+    }
+    renderList();
+    renderSide();
+    if (now) requestPlot(0);
+  }
+
+  function renderSide() {
+    const chosen = Boolean(catalogue && pick.name);
+    $("v-chosen").hidden = !chosen;
+    $("v-streams").hidden = !chosen;
+    const now = chosen ? inStream() : null;
+    $("v-controls").hidden = !now;
+    if (!chosen) return;
+    const about = catalogue.variables[pick.name];
+    const info = [["Name", pick.name, true], ["Description", about.long_name], ["Units", about.units]];
+    if (now) {
+      const stream = streamOf(now.stream);
+      info.push(["Dimensions", now.dims.map((dim, index) => `${dim} (${now.shape[index]})`).join(", "), true]);
+      info.push(["File type", stream.pattern, true]);
+      info.push(["Files", `${stream.files}`]);
+      if (stream.has_times) {
+        info.push(["Times", `${stream.steps}${stream.resolution ? `, ${stream.resolution}` : ""}`]);
+        info.push(["From", stream.first, true], ["To", stream.last, true]);
+        if (stream.calendar) info.push(["Calendar", stream.calendar]);
+      }
+    }
+    $("v-info").replaceChildren(...info.filter(([, value]) => value).flatMap(([key, value, mono]) => [
+      el("dt", { text: key }), el("dd", { class: mono ? "is-mono" : "", text: value }),
+    ]));
+
+    // the file types it is in
+    const holders = about.streams;
+    const box = $("v-streams");
+    if (holders.length > 1) {
+      box.replaceChildren(...[
+        el("h2", { text: "File type" }),
+        pick.stream === null ? el("p", { class: "streams__ask", text: `${pick.name} is in ${holders.length} file types. Which do you want?` }) : null,
+      ].filter(Boolean),
+        ...holders.map((entry) => {
+          const stream = streamOf(entry.stream);
+          const input = el("input", { type: "radio", name: "v-stream", value: String(entry.stream) });
+          input.checked = pick.stream === entry.stream;
+          input.addEventListener("change", () => { const before = inStream(); pick.stream = entry.stream; afterStream(before); });
+          return el("label", { class: "ptr-mode" }, input, el("span", {},
+            el("code", { text: stream.pattern }),
+            el("small", { text: [plural(stream.files, "file"), stream.resolution, stream.has_times ? `${stream.first.slice(0, 10)} to ${stream.last.slice(0, 10)}` : ""].filter(Boolean).join(" · ") }),
+          ));
+        }),
+      );
+      box.hidden = false;
+    } else {
+      box.replaceChildren();
+      box.hidden = true;
+    }
+    if (!now) return;
+    renderControls(now);
+  }
+
+  function renderControls(now) {
+    const stream = streamOf(now.stream);
+    $("v-kind").replaceChildren(...now.kinds.map((kind) => el("button", {
+      type: "button", text: KIND_NAMES[kind], "aria-pressed": String(kind === pick.kind),
+      onclick: () => {
+        pick.kind = kind;
+        // the plot at a point is the plot itself now
+        if (!["map", "line"].includes(kind)) hidePoint();
+        renderControls(now);
+        requestPlot(0);
+      },
+    })));
+    const usesTime = now.time && ["map", "line", "profile"].includes(pick.kind) && stream.steps > 1;
+    $("c-time").hidden = !usesTime;
+    $("v-step").max = String(Math.max(0, stream.steps - 1));
+    $("v-step").value = String(pick.step);
+    $("v-when").textContent = stream.times[pick.step] || "";
+    $("v-prev").disabled = pick.step <= 0;
+    $("v-next").disabled = pick.step >= stream.steps - 1;
+    if (!usesTime) stopPlay();
+    const usesLevel = now.vertical && now.levels > 1 && ["map", "line", "series"].includes(pick.kind);
+    $("c-level").hidden = !usesLevel;
+    if (usesLevel) {
+      const units = now.level_units ? ` ${now.level_units}` : "";
+      const options = now.level_values.map((value, index) => el("option", { value: String(index), text: `${typeof value === "number" ? +value.toPrecision(6) : value}${units}` }));
+      $("v-level").replaceChildren(...options);
+      $("v-level").value = String(pick.level);
+    }
+    const usesCell = ["series", "profile", "hovmoller"].includes(pick.kind) || (now.kinds.includes("map") && now.time);
+    $("c-cell").hidden = !usesCell;
+    const cell = $("v-cell");
+    cell.classList.toggle("is-none", !pick.cell);
+    cell.textContent = pick.cell ? cellText() : (now.kinds.includes("map") ? "Click on the map to see the variable through time there." : "The middle of the grid.");
+    const coloured = ["map", "hovmoller"].includes(pick.kind);
+    $("c-colour").hidden = !coloured;
+    $("v-cmap").value = pick.cmap;
+    $("v-vmin").value = pick.vmin;
+    $("v-vmax").value = pick.vmax;
+    $("v-log").checked = pick.log;
+    $("v-coast").checked = pick.coast && state.coast;
+    $("v-coast").disabled = !state.coast || pick.kind !== "map";
+    $("v-coast-label").classList.toggle("is-off", $("v-coast").disabled);
+    $("v-coast-label").title = state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)";
+    $("v-keep").hidden = pick.kind !== "map";
+  }
+
+  function cellText() {
+    const now = inStream();
+    const where = pick.position
+      ? `${Math.abs(pick.position[0]).toFixed(3)}°${pick.position[0] < 0 ? "W" : "E"}, ${Math.abs(pick.position[1]).toFixed(3)}°${pick.position[1] < 0 ? "S" : "N"}`
+      : "";
+    const index = now ? now.horizontal.map((dim, i) => `${dim}=${pick.cell[i]}`).join(", ") : "";
+    return [where, `cell ${index}`].filter(Boolean).join(" · ");
+  }
+
+  // the time: the slider, the arrows and playing through them
+  function setStep(step) {
+    const now = inStream();
+    if (!now) return;
+    const stream = streamOf(now.stream);
+    pick.step = Math.min(Math.max(0, step), stream.steps - 1);
+    renderControls(now);
+    requestPlot(120);
+  }
+  $("v-step").addEventListener("input", (event) => setStep(Number(event.target.value)));
+  $("v-prev").addEventListener("click", () => setStep(pick.step - 1));
+  $("v-next").addEventListener("click", () => setStep(pick.step + 1));
+  let playing = false;
+  function stopPlay() {
+    playing = false;
+    $("v-play").setAttribute("aria-pressed", "false");
+    $("v-play").innerHTML = "&#9654;";
+  }
+  $("v-play").addEventListener("click", () => {
+    if (playing) { stopPlay(); return; }
+    playing = true;
+    $("v-play").setAttribute("aria-pressed", "true");
+    $("v-play").innerHTML = "&#10074;&#10074;";
+    playOn();
+  });
+  // the next time is asked for once the last one is drawn
+  function playOn() {
+    if (!playing) return;
+    const now = inStream();
+    if (!now) { stopPlay(); return; }
+    const stream = streamOf(now.stream);
+    setStep(pick.step >= stream.steps - 1 ? 0 : pick.step + 1);
+  }
+  document.addEventListener("keydown", (event) => {
+    if (state.view !== "viewer" || $("c-time").hidden || $("v-controls").hidden) return;
+    const target = event.target;
+    if (target.matches && target.matches("input:not([type=range]), select, textarea")) return;
+    if (event.key === "ArrowRight") { event.preventDefault(); setStep(pick.step + 1); }
+    if (event.key === "ArrowLeft") { event.preventDefault(); setStep(pick.step - 1); }
+  });
+
+  $("v-level").addEventListener("change", (event) => { pick.level = Number(event.target.value); requestPlot(0); if (!$("point").hidden) requestPoint(); });
+  $("v-cmap").addEventListener("change", (event) => { pick.cmap = event.target.value; requestPlot(0); });
+  for (const name of ["vmin", "vmax"]) {
+    $(`v-${name}`).addEventListener("input", (event) => {
+      pick[name] = event.target.value.trim();
+      const bad = pick[name] !== "" && !Number.isFinite(Number(pick[name]));
+      event.target.classList.toggle("is-invalid", bad);
+      if (!bad) requestPlot(500);
+    });
+  }
+  $("v-keep").addEventListener("click", () => {
+    if (!lastClim) return;
+    pick.vmin = String(+lastClim[0].toPrecision(6));
+    pick.vmax = String(+lastClim[1].toPrecision(6));
+    renderControls(inStream());
+    toast("The colour scale is kept for every time until you choose Automatic.");
+  });
+  $("v-auto").addEventListener("click", () => { pick.vmin = pick.vmax = ""; renderControls(inStream()); requestPlot(0); });
+  $("v-log").addEventListener("change", (event) => { pick.log = event.target.checked; requestPlot(0); });
+  $("v-coast").addEventListener("change", (event) => { pick.coast = event.target.checked; requestPlot(0); });
+
+  // ---- the plots ----
+  let plotNumber = 0;
+  let plotTimer = null;
+  function plotParams(kind) {
+    return {
+      kind, stream: String(pick.stream), var: pick.name, step: String(pick.step), level: String(pick.level),
+      cell: pick.cell ? pick.cell.join(",") : "", cmap: pick.cmap, vmin: pick.vmin, vmax: pick.vmax,
+      log: pick.log ? "1" : "", coast: pick.coast ? "1" : "",
+    };
+  }
+
+  function clearPlot() {
+    plotNumber++;
+    $("plot").replaceChildren();
+    $("plot-empty").hidden = false;
+    $("plot-busy").hidden = true;
+    $("plot-error").hidden = true;
+    $("plot-notes").replaceChildren();
+    hidePoint();
+    if (catalogue && pick.name && pick.stream === null) {
+      $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose the file type" }), `${pick.name} is in more than one: say which on the left.`));
+    } else {
+      $("plot-empty").replaceChildren(el("div", {}, el("strong", { text: "Choose a variable" }), "Search for it on the left."));
+    }
+  }
+
+  function requestPlot(delay) {
+    clearTimeout(plotTimer);
+    const number = ++plotNumber;
+    $("plot-busy").hidden = false;
+    $("plot-busy-text").textContent = ["series", "hovmoller"].includes(pick.kind) ? "Reading every file at this point" : "Reading the data";
+    plotTimer = setTimeout(async () => {
+      let reply;
+      try {
+        reply = await (await fetch(`api/plot?${query(plotParams(pick.kind))}`, { cache: "no-store" })).json();
+      } catch (error) {
+        reply = { ok: false, error: "ncviewer is no longer running." };
+      }
+      if (number !== plotNumber) return;
+      $("plot-busy").hidden = true;
+      if (reply.stopped) return;
+      if (!reply.ok) {
+        $("plot-error").textContent = reply.error;
+        $("plot-error").hidden = false;
+        stopPlay();
+        return;
+      }
+      $("plot-error").hidden = true;
+      if (reply.cell && !pick.cell) {
+        pick.cell = reply.cell;
+        pick.position = reply.position || null;
+      }
+      lastClim = reply.clim || null;
+      if (reply.axes) lastAxes = reply.axes;
+      await draw("plot", reply.item);
+      $("plot-empty").hidden = true;
+      const notes = (reply.notes || []).map((text) => el("span", { class: "is-warn", text }));
+      if (reply.file) notes.push(el("span", {}, "File: ", el("code", { text: reply.file })));
+      $("plot-notes").replaceChildren(...notes);
+      const now = inStream();
+      if (now) renderControls(now);
+      if (playing) setTimeout(playOn, 250);
+    }, delay);
+  }
+
+  async function draw(target, item) {
+    const node = $(target);
+    node.replaceChildren();
+    if (window.Bokeh) {
+      await Bokeh.embed.embed_item(item, target);
+    } else {
+      node.append(el("p", { class: "stage__error", text: "Bokeh could not be loaded, so nothing can be drawn." }));
+    }
+  }
+
+  // a click on the map: the cell nearest it, and the variable through time there
+  document.addEventListener("ncviewer-tap", async (event) => {
+    const now = inStream();
+    if (!now || !["map", "line"].includes(pick.kind)) return;
+    const { x, y } = event.detail;
+    let reply;
+    try {
+      reply = await (await fetch(`api/cell?${query({ stream: String(pick.stream), var: pick.name, x, y, axes: pick.kind === "map" ? lastAxes : "index" })}`, { cache: "no-store" })).json();
+    } catch (error) {
+      return;
+    }
+    if (!reply.ok) { toast(reply.error); return; }
+    pick.cell = reply.cell;
+    pick.position = reply.position || null;
+    renderControls(now);
+    if (now.time || (now.vertical && now.levels > 1)) requestPoint();
+  });
+
+  let pointNumber = 0;
+  async function requestPoint() {
+    const now = inStream();
+    if (!now || !pick.cell) return;
+    const number = ++pointNumber;
+    const kind = now.time ? "series" : "profile";
+    $("point").hidden = false;
+    $("point-busy").hidden = false;
+    let reply;
+    try {
+      reply = await (await fetch(`api/plot?${query({ ...plotParams(kind), page: `${pageId}-point` })}`, { cache: "no-store" })).json();
+    } catch (error) {
+      reply = { ok: false, error: "ncviewer is no longer running." };
+    }
+    if (number !== pointNumber) return;
+    $("point-busy").hidden = true;
+    if (reply.stopped) return;
+    if (!reply.ok) { toast(reply.error); hidePoint(); return; }
+    await draw("point-plot", reply.item);
+  }
+  function hidePoint() {
+    pointNumber++;
+    $("point").hidden = true;
+    $("point-plot").replaceChildren();
+  }
+  $("point-close").addEventListener("click", hidePoint);
+
+  // ---- following ncviewer's state ----
+  const TITLES = {
+    files: "Where is your simulation's output?",
+    scanning: "Reading your simulation's output",
+    viewer: "What is in your simulation's output",
+  };
+  let shownView = null;
+  function apply(next) {
+    state = next;
+    if (state.closed) {
+      document.body.replaceChildren(el("main", { class: "wrap" }, el("p", { class: "lede", text: "ncviewer has stopped. Run ncviewer again to look at more output." })));
+      return false;
+    }
+    if (state.view !== shownView) {
+      shownView = state.view;
+      for (const view of ["files", "scanning", "viewer"]) $(`view-${view}`).hidden = view !== state.view;
+      document.body.classList.toggle("is-viewer", state.view === "viewer");
+      $("title").textContent = TITLES[state.view];
+      if (state.view === "files") {
+        refreshFiles();
+        $("f-simdir").focus();
+      }
+    }
+    if (state.view === "files") showError(state.error);
+    if (state.view === "scanning") renderScan();
+    if (state.view === "viewer" && state.catalogue_number !== catalogueNumber) loadCatalogue();
+    renderBar();
+    return true;
+  }
+
+  async function poll() {
+    for (;;) {
+      let next;
+      try {
+        const response = await fetch(`api/state?${query({ version: state.version })}`, { cache: "no-store" });
+        next = await response.json();
+      } catch (error) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        continue;
+      }
+      if (!apply(next)) return;
+    }
+  }
+
+  tellVisibility(token, "");
+  apply(state);
+  if (setup.simdir) askProbe(0);
+  poll();
+})();
+</script>
+</body>
+</html>

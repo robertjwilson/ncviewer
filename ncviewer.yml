@@ -1,0 +1,22 @@
+name: ncviewer
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - h5py
+  - cftime
+  - bokeh>=3.1
+  - holoviews
+  - hvplot
+  # coastlines on maps
+  - cartopy
+  - geoviews
+  # faster drawing of large grids
+  - datashader
+  # tests
+  - pytest
+  - pip
