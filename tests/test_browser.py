@@ -99,6 +99,8 @@ def test_viewer(page, simulation):
     tab.click("#v-streams label.ptr-mode >> nth=1")
     tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    # nothing is said at the bottom of the page (not the files, file types or directory)
+    assert tab.text_content("#summary") == ""
     # the calendar is not shown
     assert "Calendar" not in tab.text_content("#v-info")
     assert "Times" in tab.text_content("#v-info")

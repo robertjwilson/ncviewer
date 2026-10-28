@@ -122,7 +122,6 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   position: fixed; left: 50%; bottom: 84px; z-index: 50; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px));
   padding: 10px 16px; border-radius: var(--radius-sm); background: var(--toast-bg); color: var(--bg); font-size: 13.5px; box-shadow: var(--shadow-lg);
 }
-.summary code { font-size: 12.5px; }
 /* FVCOM output is drawn in pyfvcom2's way, which the footer says */
 .credit { align-self: center; margin-right: 6px; color: var(--muted); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
 .credit:hover { color: var(--teal-700); }
@@ -262,7 +261,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 <script>
 (() => {
   "use strict";
-  const { $, el, icon, plural, toast, pageId, tellVisibility, withChoices, shorten } = GUI;
+  const { $, el, icon, plural, toast, pageId, tellVisibility, withChoices } = GUI;
   let state = JSON.parse($("state").textContent);
   const token = state.token;
 
@@ -477,12 +476,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   // ---- the footer ----
   function renderBar() {
     const summary = $("summary");
-    if (state.view === "viewer" && catalogue) {
-      summary.replaceChildren(
-        el("span", {}, el("b", { text: plural(catalogue.files, "file") }), ` in ${plural(catalogue.streams.length, "file type")} under `),
-        el("code", { text: shorten(catalogue.simdir, 64), title: catalogue.simdir }),
-      );
-    } else if (state.view === "files") {
+    // nothing is said at the bottom of the viewer: the map has the room
+    if (state.view === "files") {
       summary.replaceChildren(el("span", { text: "Continue reads the variables and times of every file." }));
     } else {
       summary.replaceChildren();
