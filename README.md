@@ -80,13 +80,24 @@ changed files.
     **Slow**, **Normal** or **Fast** (2, 5 or 10 frames a second); it can only go as fast as
     the files can be read, and says "Loading" if it has to wait. Moving the slider pauses
     it. Pause leaves the colour scale as it was until you choose **Automatic scale**.
+  - **Time series**: turn it on, then click the map to see the values of that cell through
+    every time of the file type, at the depth shown (the sum, if several variables are
+    ticked, with your missing values applied). The cell is the nearest one with a value in
+    the map shown, within 2 cells of the click, so a click on the coast is taken to the sea.
+    The series opens in a pop-out over the map. Drag it by its title to move it, close it with
+    × (or Esc), and click elsewhere to replace it. Only that cell is read from each file
+    (with h5py, or netCDF4 for netCDF-3 files, not xarray). With more than 6 files, the
+    pop-out counts them as they are read. With 40 files or more they are read in a pool of
+    processes: **Cores** says how many, half the machine's cores to start with. Compressed
+    files are slower, as each time step's whole chunk is decompressed to get one cell, and
+    more cores help most there.
   - **Depth**: the level to show.
   - **Colours**: the colour map, fixed limits ("Keep this scale for every time"), a
     logarithmic scale, and coastlines (needs cartopy and geoviews).
 - **Middle**: the map. You can zoom, pan, hover to read values, and save a PNG.
 
-Only the map being shown is read: one time step at one level of one file. So output of
-many GB stays quick to look at.
+Only the map being shown is read: one time step at one level of one file (a time series reads
+one cell of each file). So output of many GB stays quick to look at.
 
 ### How a map is drawn (from ncplot)
 

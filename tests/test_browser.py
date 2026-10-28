@@ -2,6 +2,9 @@
 folders' layout, Continue reads the files, and the viewer maps a variable
 once its file type is chosen. Skipped where Chromium is not installed."""
 
+import os
+import time
+
 import pytest
 
 from ncviewer import app as ncapp
@@ -254,3 +257,114 @@ def test_play_keeps_the_zoom_and_the_scale(page, simulation):
     tab.keyboard.press("Enter")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]
+
+
+def _click_map(tab, x_share=0.5, y_share=0.5):
+    """Clicks the map on show, at a share of its plotting area's width and height."""
+    box = tab.evaluate("""() => {
+        // the map's figure, not the time series'
+        const views = Object.values(Bokeh.index).filter((v) => v.model && v.model.type === "Figure"
+            && !document.getElementById("series").contains(v.el));
+        const view = views[views.length - 1];
+        const frame = view.frame.bbox, canvas = view.el.getBoundingClientRect();
+        return [canvas.left + frame.left, canvas.top + frame.top, frame.width, frame.height];
+    }""")
+    # two clicks in quick succession are a double tap to Bokeh, not two taps
+    tab.wait_for_timeout(500)
+    tab.mouse.click(box[0] + box[2] * x_share, box[1] + box[3] * y_share)
+
+
+def test_time_series_of_a_cell(page, simulation):
+    tab, app = page
+    _open_chl(tab, simulation)
+    # off to start with: a click on the map does nothing
+    assert tab.get_attribute("#v-series", "aria-pressed") == "false"
+    assert tab.is_hidden("#v-series-hint")
+    _click_map(tab)
+    tab.wait_for_timeout(300)
+    assert tab.is_hidden("#series")
+    # 24 files: too few for the cores to matter
+    assert tab.is_hidden("#v-cores-label")
+    tab.click("#v-series")
+    assert tab.get_attribute("#v-series", "aria-pressed") == "true"
+    assert tab.is_visible("#v-series-hint")
+    _click_map(tab, 0.6, 0.5)
+    tab.wait_for_selector("#series:not([hidden])")
+    tab.wait_for_selector("#series-plot [class^=bk]", timeout=30000)
+    assert tab.is_hidden("#series-error")
+    assert tab.is_hidden("#series-reading")
+    assert tab.text_content("#series-title") == "Time series of chl"
+    # the map is still there, and still answers clicks: a second one replaces the series
+    first = app.series_job["cell"]
+    # (above the pop-out, which is over the bottom of the map)
+    _click_map(tab, 0.9, 0.1)
+    for _ in range(100):
+        if app.series_job and app.series_job["cell"] != first:
+            break
+        tab.wait_for_timeout(100)
+    assert app.series_job["cell"] != first
+    tab.wait_for_function("() => document.querySelector('#series-reading').hidden", timeout=30000)
+    tab.wait_for_selector("#series-plot [class^=bk]", timeout=30000)
+    # one chart, the old one taken apart
+    assert tab.evaluate("() => Object.values(Bokeh.index).filter((v) => v.model && v.model.type === 'Figure').length") == 2
+    tab.screenshot(path=os.environ.get("NCVIEWER_SCREENSHOT", "/dev/null"), type="png")
+    # the x closes it, and stops it
+    tab.click("#series-close")
+    assert tab.is_hidden("#series")
+    assert app.series_job is None
+    # Escape does too
+    _click_map(tab, 0.6, 0.5)
+    tab.wait_for_selector("#series:not([hidden])")
+    tab.keyboard.press("Escape")
+    assert tab.is_hidden("#series")
+    # turning it off closes it and makes clicks do nothing again
+    _click_map(tab, 0.6, 0.5)
+    tab.wait_for_selector("#series:not([hidden])")
+    tab.click("#v-series")
+    assert tab.is_hidden("#series")
+    _click_map(tab, 0.6, 0.5)
+    tab.wait_for_timeout(300)
+    assert tab.is_hidden("#series")
+
+
+def test_time_series_cores(page, simulation, monkeypatch):
+    from ncviewer import series
+
+    monkeypatch.setattr(series, "PARALLEL_FROM", 10)
+    monkeypatch.setattr(series, "max_cores", lambda: 4)
+    monkeypatch.setattr(series, "default_cores", lambda: 2)
+    tab, app = page
+    tab.reload()
+    _open_chl(tab, simulation)
+    tab.click("#v-series")
+    # enough files for the cores to matter: half the machine's to start with
+    assert tab.is_visible("#v-cores-label")
+    assert tab.input_value("#v-cores") == "2"
+    assert tab.text_content("#v-cores-of") == "of 4"
+    tab.fill("#v-cores", "9")
+    assert "is-invalid" in tab.get_attribute("#v-cores", "class")
+    _click_map(tab)
+    tab.wait_for_selector("#series-error:not([hidden])")
+    assert "from 1 to 4" in tab.text_content("#series-error")
+    tab.fill("#v-cores", "1")
+    _click_map(tab)
+    tab.wait_for_selector("#series-plot [class^=bk]", timeout=30000)
+    assert tab.is_hidden("#series-error")
+
+
+def test_time_series_counts_the_files(page, simulation, monkeypatch):
+    from ncviewer import series
+
+    # slow enough to be seen
+    reading = series.point_values
+    monkeypatch.setattr(series, "point_values", lambda *args: (time.sleep(0.15), reading(*args))[1])
+    tab, app = page
+    _open_chl(tab, simulation)
+    tab.click("#v-series")
+    _click_map(tab, 0.6, 0.6)
+    # more than 6 files: counted, with a meter
+    tab.wait_for_function("() => /Reading the files: [1-9]\\d*\\/24 files read/.test(document.querySelector('#series-reading-text').textContent)")
+    assert tab.is_visible("#series-reading .meter")
+    tab.screenshot(path=os.environ.get("NCVIEWER_SCREENSHOT_COUNT", "/dev/null"), type="png")
+    tab.wait_for_selector("#series-plot [class^=bk]", timeout=30000)
+    assert tab.is_hidden("#series-reading")
