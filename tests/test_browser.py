@@ -262,8 +262,9 @@ def test_fvcom_output(page, tmp_path, monkeypatch):
     from simulations import fvcom_simulation
 
     tab, app = page
-    # without geoviews, the mesh's edge can still be drawn as its coastline
+    # without geoviews, a mesh's coastline can still be drawn, with cartopy alone
     monkeypatch.setattr(ncapp, "_has_geoviews", lambda: False)
+    monkeypatch.setattr(ncapp, "_has_cartopy", lambda: True)
     tab.reload()
     root = fvcom_simulation(str(tmp_path / "fvcom"))
     tab.fill("#f-simdir", root)
@@ -285,7 +286,7 @@ def test_fvcom_output(page, tmp_path, monkeypatch):
     tab.select_option("#v-level", "4")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert tab.is_hidden("#plot-error")
-    assert tab.is_enabled("#v-coast") and "the model's own coastline" in tab.get_attribute("#v-coast-label", "title")
+    assert tab.is_enabled("#v-coast")
     tab.check("#v-coast")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert tab.is_hidden("#plot-error")

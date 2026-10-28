@@ -76,36 +76,29 @@ def natural_earth_coastline(x_range, y_range, scale):
     return _coastlines[key]
 
 
-def mesh_coastlines(mesh, x, y):
-    """The coastlines drawn over a map of an FVCOM mesh, whose axes are x and
-    y: the mesh's edge, the model's own coastline (solid), and the Natural
-    Earth coastline where cartopy is there and the mesh is in longitude and
-    latitude (dashed). Drawn in the map's own axes, not by geoviews, which
-    would have to reproject the map's image (and needs scipy to). Returns
-    (overlay, notes)."""
-    notes = []
-    edge_x, edge_y = mesh.outline()
-    lines = [hv.Path((edge_x, edge_y), kdims=[x, y]).opts(color="#111827", line_width=1.3)]
+def mesh_coastline(mesh, x, y):
+    """The Natural Earth coastline over a map of an FVCOM mesh, whose axes
+    are x and y (longitude and latitude). Drawn in the map's own axes, not
+    by geoviews, which would have to reproject the map's image (and needs
+    scipy to). Returns (overlay or None, notes)."""
     if mesh.cartesian:
-        notes.append("The mesh is in metres, so only its edge is drawn as the coastline.")
-    elif not has_cartopy():
-        notes.append("Only the mesh's edge is drawn as the coastline: Natural Earth's needs cartopy.")
-    else:
-        # a margin, so the coastline goes on a little past the mesh as the map is panned
-        x0, x1 = float(np.nanmin(mesh.x)), float(np.nanmax(mesh.x))
-        y0, y1 = float(np.nanmin(mesh.y)), float(np.nanmax(mesh.y))
-        pad_x, pad_y = max((x1 - x0) * 0.25, 0.05), max((y1 - y0) * 0.25, 0.05)
-        try:
-            coast_x, coast_y = natural_earth_coastline(
-                (max(x0 - pad_x, -180), min(x1 + pad_x, 180)), (max(y0 - pad_y, -90), min(y1 + pad_y, 90)),
-                coastline_scale(mesh.x, mesh.y),
-            )
-        except Exception as error:  # noqa: BLE001 - told to the user; the mesh's edge is still drawn
-            notes.append(f"{COAST_FAILED} (cartopy downloads it the first time): {error}")
-        else:
-            if len(coast_x):
-                lines.append(hv.Path((coast_x, coast_y), kdims=[x, y]).opts(color="#111827", line_width=1.2, line_dash="dashed"))
-    return hv.Overlay(lines), notes
+        return None, ["The mesh is in metres, not longitude and latitude, so there is no coastline."]
+    if not has_cartopy():
+        return None, ["Coastlines need cartopy installed."]
+    # a margin, so the coastline goes on a little past the mesh as the map is panned
+    x0, x1 = float(np.nanmin(mesh.x)), float(np.nanmax(mesh.x))
+    y0, y1 = float(np.nanmin(mesh.y)), float(np.nanmax(mesh.y))
+    pad_x, pad_y = max((x1 - x0) * 0.25, 0.05), max((y1 - y0) * 0.25, 0.05)
+    try:
+        coast_x, coast_y = natural_earth_coastline(
+            (max(x0 - pad_x, -180), min(x1 + pad_x, 180)), (max(y0 - pad_y, -90), min(y1 + pad_y, 90)),
+            coastline_scale(mesh.x, mesh.y),
+        )
+    except Exception as error:  # noqa: BLE001 - told to the user
+        return None, [f"{COAST_FAILED} (cartopy downloads it the first time): {error}"]
+    if not len(coast_x):
+        return None, []
+    return hv.Path((coast_x, coast_y), kdims=[x, y]).opts(color="#111827", line_width=1.2), []
 
 
 def _render(plot):
@@ -256,7 +249,7 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
         tools=["hover"], responsive=True, colorbar=True, clabel=about.get("units") or None,
     )
     cartesian = about.get("cartesian", False)
-    # a mesh's coastlines are drawn over its image in its own axes (mesh_coastlines), not by geoviews
+    # a mesh's coastline is drawn over its image in its own axes (mesh_coastline), not by geoviews
     on_mesh = bool(about.get("mesh"))
     geographic = coast and lon is not None and not on_mesh and has_geoviews()
     if coast and lon is not None and not on_mesh and not geographic:
@@ -276,7 +269,8 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
         else:
             plot = data.hvplot.image(**options)
         if coast and on_mesh:
-            lines, coast_notes = mesh_coastlines(mesh, x, y)
-            plot = (plot * lines).opts(responsive=True)
+            line, coast_notes = mesh_coastline(mesh, x, y)
+            if line is not None:
+                plot = (plot * line).opts(responsive=True)
             notes += coast_notes
     return _render(plot), notes, [float(low), float(high)]

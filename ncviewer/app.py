@@ -133,6 +133,8 @@ class App:
                 "error": self.error,
                 "catalogue_number": self.catalogue_number if self.catalogue else None,
                 "coast": _has_geoviews(),
+                # an FVCOM mesh's coastline needs only cartopy (plotting.mesh_coastline)
+                "coast_mesh": _has_cartopy(),
                 "closed": self.closed.is_set(),
             }
 
@@ -339,6 +341,15 @@ def _has_geoviews():
         import importlib.util
 
         return all(importlib.util.find_spec(name) is not None for name in ("geoviews", "cartopy"))
+    except (ImportError, ValueError):
+        return False
+
+
+def _has_cartopy():
+    try:
+        import importlib.util
+
+        return all(importlib.util.find_spec(name) is not None for name in ("cartopy", "shapely"))
     except (ImportError, ValueError):
         return False
 

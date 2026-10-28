@@ -743,15 +743,15 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("v-vmin").value = pick.vmin;
     $("v-vmax").value = pick.vmax;
     $("v-log").checked = pick.log;
-    // an FVCOM mesh's edge is its coastline, which needs neither cartopy nor geoviews
+    // an FVCOM mesh's coastline is drawn with cartopy alone, without geoviews
     const onMesh = Boolean(now.mesh);
-    const canCoast = state.coast || onMesh;
+    const canCoast = onMesh ? state.coast_mesh : state.coast;
     $("v-coast").checked = pick.coast && canCoast;
     $("v-coast").disabled = !canCoast;
     $("v-coast-label").classList.toggle("is-off", $("v-coast").disabled);
-    $("v-coast-label").title = onMesh
-      ? "The mesh's edge, the model's own coastline (solid), and Natural Earth's coastline (dashed) where cartopy is installed"
-      : (state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)");
+    $("v-coast-label").title = canCoast ? ""
+      : onMesh ? "Coastlines need cartopy (conda install -c conda-forge cartopy)"
+        : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)";
   }
 
   // the time: the slider and the arrows

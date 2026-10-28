@@ -116,14 +116,10 @@ milliseconds, so Play stays smooth. Zooming far into a fine part of a large mesh
 grid's pixels, not the triangles. A mesh without longitudes and latitudes is drawn in its
 `x` and `y` (metres).
 
-For a mesh, **Coastlines** draws two lines over the map, in its own longitude and latitude:
-- the mesh's edge (solid), which is the model's own coastline and is exact at any zoom. It
-  also outlines the open-sea boundary, and it needs neither cartopy nor geoviews.
-- Natural Earth's coastline (dashed), clipped to the area, where cartopy is installed. cartopy
-  downloads it the first time each scale is used, and the page says so if that fails. At its
-  finest (1:10 million) it can be well off the mesh in an estuary.
-
-A mesh in metres gets only its edge.
+For a mesh, **Coastlines** draws Natural Earth's coastline over the map, in its own longitude
+and latitude. This needs cartopy only, not geoviews or scipy. cartopy downloads the coastline the
+first time each scale is used, and the page says so if that fails. At its finest
+(1:10 million) it can be well off the mesh in an estuary. A mesh in metres has no coastline.
 
 ## Tests
 
