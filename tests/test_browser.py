@@ -3,6 +3,7 @@ folders' layout, Continue reads the files, and the viewer maps a variable
 once its file type is chosen. Skipped where Chromium is not installed."""
 
 import os
+import time
 
 import pytest
 
@@ -21,6 +22,16 @@ def page(browser):
     assert errors == []
     tab.close()
     app.close()
+
+
+def _times_in(tab, app):
+    """Waits for the times of every file, which are read in the background once the viewer has opened."""
+    for _ in range(600):
+        if app.catalogue is not None and app.catalogue.times_complete and app.times is None:
+            break
+        time.sleep(0.1)
+    assert app.catalogue.times_complete
+    tab.wait_for_function("() => !document.getElementById('v-first').disabled", timeout=60000)
 
 
 def test_files_page_finds_the_depth(page, simulation):
@@ -89,6 +100,7 @@ def test_viewer(page, simulation):
     tab.fill("#missing-to-0", "11.3")
     tab.click("#continue")
     tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    _times_in(tab, app)
     tab.fill("#v-search", "chloro")
     assert tab.locator("#v-list li").count() == 1
     tab.fill("#v-search", "temp")
@@ -159,11 +171,12 @@ def test_sum_of_variables(page, simulation):
     tab.wait_for_selector("#view-files:not([hidden])")
 
 
-def _open_chl(tab, simulation):
+def _open_chl(tab, app, simulation):
     tab.fill("#f-simdir", simulation)
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
     tab.click("#continue")
     tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    _times_in(tab, app)
     tab.fill("#v-search", "chl")
     tab.keyboard.press("Enter")
     tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
@@ -184,7 +197,7 @@ def _watch_play(tab):
 
 def test_play_is_an_animation(page, simulation):
     tab, app = page
-    _open_chl(tab, simulation)
+    _open_chl(tab, app, simulation)
     plots = []
     tab.on("request", lambda request: plots.append(request.url) if "api/plot" in request.url else None)
     _watch_play(tab)
@@ -211,7 +224,7 @@ def test_play_is_an_animation(page, simulation):
 
 def test_play_speed(page, simulation):
     tab, app = page
-    _open_chl(tab, simulation)
+    _open_chl(tab, app, simulation)
     assert tab.input_value("#v-speed") == "normal"
     rates = {}
     for speed in ("slow", "fast"):
@@ -236,7 +249,7 @@ def _figure_ranges(tab, to=None):
 
 def test_play_keeps_the_zoom_and_the_scale(page, simulation):
     tab, app = page
-    _open_chl(tab, simulation)
+    _open_chl(tab, app, simulation)
     assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]
     # zoom in, then play: every frame is zoomed the same
     _figure_ranges(tab, [2, 6, 1, 5])
@@ -273,6 +286,7 @@ def test_fvcom_output(page, tmp_path, monkeypatch):
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
     tab.click("#continue")
     tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    _times_in(tab, app)
     # pyfvcom2, whose way the mesh is drawn, is credited at the bottom right
     credit = tab.locator("#fvcom-credit")
     assert credit.is_visible() and credit.text_content() == "Plotting is influenced by pyfvcom2"
@@ -309,3 +323,154 @@ def test_fvcom_output(page, tmp_path, monkeypatch):
     tab.click("#back")
     tab.wait_for_selector("#view-files:not([hidden])")
     assert tab.is_hidden("#fvcom-credit")
+
+
+@pytest.fixture
+def gated_times(monkeypatch):
+    """The times of the files after the first of each file type are not read in the background until the gate is opened."""
+    import threading
+
+    from ncviewer import catalogue
+
+    gate = threading.Event()
+    real = catalogue._read_times
+
+    def gated(*args, **kwargs):
+        gate.wait(60)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(catalogue, "_read_times", gated)
+    yield gate
+    gate.set()
+
+
+def _open_viewer(tab, simulation):
+    tab.fill("#f-simdir", simulation)
+    tab.wait_for_function("() => !document.querySelector('#continue').disabled")
+    tab.click("#continue")
+    tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+
+
+def test_the_viewer_opens_while_the_times_are_read(page, simulation, gated_times):
+    tab, app = page
+    _open_viewer(tab, simulation)
+    # the years wait for the times, with a count of the files' times read
+    tab.wait_for_selector("#c-years:not([hidden])")
+    assert tab.is_disabled("#v-first") and tab.is_disabled("#v-last")
+    tab.wait_for_function("() => /Reading the times of the files: \\d+\\/48/.test(document.getElementById('v-times-text').textContent)")
+    assert tab.is_visible("#v-times") and tab.is_visible("#v-times-meter")
+    # a variable is mapped meanwhile (its first time), and its time cannot be moved yet
+    tab.fill("#v-search", "chl")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_hidden("#plot-error")
+    assert tab.is_disabled("#v-step") and tab.is_disabled("#v-play") and tab.is_disabled("#v-next")
+    assert "being read" in tab.text_content("#v-info")
+    assert "Dates" not in tab.text_content("#v-info")
+    assert tab.is_enabled("#v-level") and tab.is_enabled("#v-cmap")
+    # the times come in: the years and the time can be used, and the map is as it was
+    gated_times.set()
+    tab.wait_for_function("() => !document.getElementById('v-first').disabled", timeout=60000)
+    assert tab.is_hidden("#v-times") and tab.is_hidden("#v-times-meter")
+    assert tab.get_attribute("#v-first", "placeholder") == "2000" and tab.get_attribute("#v-last", "placeholder") == "2001"
+    assert tab.is_enabled("#v-step") and tab.is_enabled("#v-play")
+    assert tab.get_attribute("#v-step", "max") == "23"
+    assert "Dates2000-01-16 – 2001-12-16" in tab.text_content("#v-info")
+    assert tab.is_hidden("#plot-error")
+    assert "2000-01-16" in tab.text_content("#v-when")
+
+
+def test_first_and_last_year(page, simulation):
+    tab, app = page
+    _open_viewer(tab, simulation)
+    _times_in(tab, app)
+    tab.fill("#v-search", "chl")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    # the arrow lists the years of the output
+    tab.click("#v-first", position={"x": tab.locator("#v-first").bounding_box()["width"] - 8, "y": 10})
+    assert tab.locator(".year-list li").all_text_contents() == ["2000", "2001"]
+    tab.click(".year-list li >> text=2001")
+    assert tab.input_value("#v-first") == "2001"
+    # the time is cut to 2001: the slider, the arrows and the dates
+    tab.wait_for_function("() => document.getElementById('v-step').min === '12'")
+    assert tab.get_attribute("#v-step", "max") == "23"
+    tab.wait_for_function("() => document.getElementById('v-when').textContent.startsWith('2001-01')")
+    info = tab.text_content("#v-info")
+    assert "Times12 of 24, monthly" in info and "Files12 of 24" in info and "Dates2001-01-16 – 2001-12-16" in info
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_disabled("#v-prev")
+    for _ in range(11):
+        tab.click("#v-next")
+    assert tab.is_disabled("#v-next") and tab.get_attribute("#v-step", "max") == tab.input_value("#v-step")
+    assert tab.text_content("#v-when").startswith("2001-12")
+    # Play stays in the years
+    tab.fill("#v-last", "2001")
+    # (the years settle a moment after they are typed, and stop an animation that is going)
+    tab.wait_for_timeout(800)
+    _watch_play(tab)
+    tab.click("#v-play")
+    tab.wait_for_function("() => window.__seen.length >= 4", timeout=30000)
+    tab.click("#v-play")
+    assert all(date.startswith("2001-") for date in tab.evaluate("() => window.__seen"))
+    assert tab.is_hidden("#plot-error")
+    # the colour scale of the animation is for those years only
+    assert tab.input_value("#v-vmin") == ""
+    # one year: the slider's steps are the year's
+    tab.fill("#v-first", "2000")
+    tab.fill("#v-last", "2000")
+    tab.wait_for_function("() => document.getElementById('v-step').max === '11'")
+    assert tab.get_attribute("#v-step", "min") == "0"
+    # the time shown (December 2001) was outside, so the map is moved to the nearest time inside
+    tab.wait_for_function("() => document.getElementById('v-when').textContent.startsWith('2000-12')")
+    # blank boxes are no limit
+    tab.fill("#v-first", "")
+    tab.fill("#v-last", "")
+    tab.wait_for_function("() => document.getElementById('v-step').max === '23'")
+    assert tab.is_hidden("#v-years-note")
+
+
+def test_years_that_cannot_be_used(page, simulation):
+    tab, app = page
+    _open_viewer(tab, simulation)
+    _times_in(tab, app)
+    tab.fill("#v-search", "chl")
+    tab.keyboard.press("Enter")
+    tab.wait_for_selector("#plot-wrap [class^=bk]", timeout=30000)
+    tab.fill("#v-first", "20x")
+    tab.wait_for_selector("#v-years-note:not([hidden])")
+    assert "First year is a whole number" in tab.text_content("#v-years-note")
+    assert "is-invalid" in tab.get_attribute("#v-first", "class")
+    tab.fill("#v-first", "2001")
+    tab.fill("#v-last", "2000")
+    tab.wait_for_function("() => document.getElementById('v-years-note').textContent.includes('after the last')")
+    assert "is-invalid" in tab.get_attribute("#v-last", "class")
+    # nothing is cut until they are right
+    assert tab.get_attribute("#v-step", "min") == "0" and tab.get_attribute("#v-step", "max") == "23"
+    tab.fill("#v-first", "1990")
+    tab.fill("#v-last", "1995")
+    tab.wait_for_function("() => document.getElementById('v-years-note').textContent.includes('no output between 1990 and 1995')")
+    assert "from 2000 to 2001" in tab.text_content("#v-years-note")
+    assert tab.get_attribute("#v-step", "max") == "23"
+    # a year beyond the output is only mentioned: the rest of the range is used
+    tab.fill("#v-first", "1990")
+    tab.fill("#v-last", "2000")
+    tab.wait_for_function("() => document.getElementById('v-step').max === '11'")
+    assert "is-invalid" not in tab.get_attribute("#v-first", "class")
+    assert "starts in 2000" in tab.text_content("#v-years-note")
+    assert tab.is_hidden("#plot-error")
+
+
+def test_years_are_forgotten_with_new_files(page, simulation):
+    tab, app = page
+    _open_viewer(tab, simulation)
+    _times_in(tab, app)
+    tab.fill("#v-first", "2001")
+    tab.click("#back")
+    tab.wait_for_selector("#view-files:not([hidden])")
+    tab.click("#continue")
+    tab.wait_for_selector("#view-viewer:not([hidden])", timeout=60000)
+    _times_in(tab, app)
+    assert tab.input_value("#v-first") == "" and tab.input_value("#v-last") == ""

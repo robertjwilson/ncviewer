@@ -123,6 +123,11 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   padding: 10px 16px; border-radius: var(--radius-sm); background: var(--toast-bg); color: var(--bg); font-size: 13.5px; box-shadow: var(--shadow-lg);
 }
 /* FVCOM output is drawn in pyfvcom2's way, which the footer says */
+/* the first and last year, and the tracker of the times being read in the background */
+.times-wait { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.times-wait .identify__spinner { width: 14px; height: 14px; border-width: 2px; }
+.years-note { margin: 0; color: var(--muted); font-size: 12.5px; }
+.years-note.is-error { color: var(--red); font-weight: 600; }
 .credit { align-self: center; margin-right: 6px; color: var(--muted); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
 .credit:hover { color: var(--teal-700); }
 @media (max-width: 640px) { .wrap { padding: 0 16px; } .brand__word { font-size: 26px; } h1 { font-size: 17px; } }
@@ -174,7 +179,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   <section id="view-scanning" class="prepare" hidden>
     <div class="card prepare__card" role="status" aria-live="polite">
       <span class="identify__spinner" aria-hidden="true"></span>
-      <h2>Identifying the files, variables and times</h2>
+      <h2>Identifying the files and variables</h2>
       <div class="meter" aria-hidden="true"><span id="scan-meter"></span></div>
       <p id="scan-text">Please wait!</p>
     </div>
@@ -190,6 +195,16 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
           </div>
           <p class="var-sum" id="v-sum-hint"><span>Tick the boxes to map the <strong>sum</strong> of several variables.</span><button type="button" class="link" id="v-clear" hidden>Clear</button></p>
           <ul class="var-list" id="v-list" role="listbox" aria-label="Variables" aria-multiselectable="true"></ul>
+        </div>
+        <div class="control" id="c-years" hidden>
+          <h2>Years</h2>
+          <div class="colour-grid">
+            <label><span class="g-label">First year</span><input class="s-input is-num" id="v-first" inputmode="numeric" placeholder="first" spellcheck="false" autocomplete="off" disabled></label>
+            <label><span class="g-label">Last year</span><input class="s-input is-num" id="v-last" inputmode="numeric" placeholder="last" spellcheck="false" autocomplete="off" disabled></label>
+          </div>
+          <div class="times-wait" id="v-times" hidden><span class="identify__spinner" aria-hidden="true"></span><span id="v-times-text" role="status" aria-live="polite"></span></div>
+          <div class="meter" id="v-times-meter" aria-hidden="true" hidden><span id="v-times-bar"></span></div>
+          <p class="years-note" id="v-years-note" role="status" aria-live="polite" hidden></p>
         </div>
         <div id="v-chosen" hidden>
           <h2>About it</h2>
@@ -478,7 +493,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     const summary = $("summary");
     // nothing is said at the bottom of the viewer: the map has the room
     if (state.view === "files") {
-      summary.replaceChildren(el("span", { text: "Continue reads the variables and times of every file." }));
+      summary.replaceChildren(el("span", { text: "Continue reads the variables, and the times of the files are read after." }));
     } else {
       summary.replaceChildren();
     }
@@ -492,18 +507,17 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     const scan = state.scan || { phase: "files", done: 0, total: 0 };
     const share = scan.total ? Math.round((100 * scan.done) / scan.total) : 0;
     $("scan-meter").style.width = `${share}%`;
-    $("scan-text").textContent = scan.phase === "times"
-      ? `Reading the times of the files: ${scan.done} of ${scan.total}`
-      : scan.phase === "variables"
-        ? `Reading the variables of each file type: ${scan.done} of ${scan.total}`
-        : "Finding the files";
+    // the times of the files are read after, in the background, while the viewer is used
+    $("scan-text").textContent = scan.phase === "variables"
+      ? `Reading the variables of each file type: ${scan.done} of ${scan.total}`
+      : "Finding the files";
   }
 
   // ---- page 2: the viewer ----
   let catalogue = null;
   let catalogueNumber = null;
   const COLOUR_MAPS = ["", "viridis", "cividis", "plasma", "inferno", "magma", "turbo", "RdBu_r", "coolwarm", "Blues", "YlGnBu", "gray"];
-  const pick = { names: [], stream: null, step: 0, level: 0, speed: "normal", cmap: "", vmin: "", vmax: "", log: false, coast: false };
+  const pick = { names: [], stream: null, step: 0, level: 0, speed: "normal", cmap: "", vmin: "", vmax: "", log: false, coast: false, first: "", last: "" };
   let lastClim = null;
   // the colour scale an animation keeps: {key, vmin, vmax, cmap}, for the variables and level it was made for
   let scale = null;
@@ -511,6 +525,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 
   async function loadCatalogue() {
     const number = state.catalogue_number;
+    const timesAtLoad = state.times_number;
     let reply;
     try {
       reply = await (await fetch(`api/catalogue?${query({})}`, { cache: "no-store" })).json();
@@ -520,16 +535,58 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (!reply.ok) return;
     catalogue = reply;
     catalogueNumber = number;
-    Object.assign(pick, { names: [], stream: null, step: 0, level: 0 });
+    timesNumber = timesAtLoad;
+    Object.assign(pick, { names: [], stream: null, step: 0, level: 0, first: "", last: "" });
     scale = null;
     $("v-search").value = "";
     clearPlot();
     renderList();
     renderSide();
+    renderYears();
     renderBar();
     $("v-search").focus();
+    toastUnreadable();
+  }
+
+  function toastUnreadable() {
+    if (!catalogue.times_complete) return;
     const unreadable = catalogue.streams.reduce((sum, stream) => sum + stream.unreadable, 0);
     if (unreadable) toast(`The times of ${plural(unreadable, "file")} could not be read.`);
+  }
+
+  // The times of the files are read in the background (at first only the first file of each file type's are in),
+  // and the page is told how far that has got (state.times) and when it is done (state.times_number), when it asks
+  // again for what the file types hold and swaps their times in, keeping what is chosen: the variables, the file
+  // type, the level and colours, the years, and the time shown (by its date, as it may have a new number).
+  let timesNumber = null;
+  async function refreshTimes() {
+    const number = state.times_number;
+    timesNumber = number;
+    let reply;
+    try {
+      reply = await (await fetch(`api/catalogue?${query({})}`, { cache: "no-store" })).json();
+    } catch (error) {
+      timesNumber = null;
+      return;
+    }
+    // another set of files has been opened since: loadCatalogue is on it
+    if (!reply.ok || reply.number !== catalogueNumber) return;
+    const now = inStream();
+    const shown = now ? streamOf(now.stream).times[pick.step] : null;
+    catalogue.streams = reply.streams;
+    catalogue.times_complete = reply.times_complete;
+    scale = null;
+    if (now) {
+      const times = streamOf(now.stream).times;
+      const at = shown ? times.findIndex((time) => time >= shown) : 0;
+      const step = at < 0 ? times.length - 1 : at;
+      const moved = step !== pick.step;
+      pick.step = step;
+      renderSide();
+      if (moved) requestPlot(0);
+    }
+    renderYears();
+    toastUnreadable();
   }
 
   const words = (text) => String(text || "").toLowerCase().split(/\s+/).filter(Boolean);
@@ -646,6 +703,8 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
         pick.step = shown ? Math.max(0, times.findIndex((time) => time >= shown)) : 0;
         if (pick.step < 0) pick.step = 0;
       }
+      const span = windowOf(streamOf(now.stream));
+      pick.step = Math.min(Math.max(span.lo, pick.step), span.hi);
       if (pick.level >= now.levels) pick.level = 0;
     } else {
       clearPlot();
@@ -673,11 +732,18 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       info.push(["Dimensions", now.dims.map((dim, index) => `${dim} (${now.shape[index]})`).join(", "), true]);
       info.push(["File type", stream.pattern, true]);
       if (now.mesh) info.push(["FVCOM mesh", now.mesh === "node" ? "values on the nodes" : "values on the elements (triangles)"]);
-      info.push(["Files", `${stream.files}`]);
-      if (stream.has_times) {
-        info.push(["Times", `${stream.steps}${stream.resolution ? `, ${stream.resolution}` : ""}`]);
+      const span = windowOf(stream);
+      // the years chosen leave some of the times, and the files that hold them
+      const cut = stream.pending === 0 && stream.has_times && (span.lo > 0 || span.hi < stream.steps - 1);
+      const heldIn = cut ? new Set(stream.step_files.slice(span.lo, span.hi + 1)).size : stream.files;
+      info.push(["Files", cut ? `${heldIn.toLocaleString()} of ${stream.files.toLocaleString()}` : `${stream.files.toLocaleString()}`]);
+      if (stream.pending > 0) {
+        info.push(["Times", "being read"]);
+      } else if (stream.has_times) {
+        const often = stream.resolution ? `, ${stream.resolution}` : "";
+        info.push(["Times", cut ? `${(span.hi - span.lo + 1).toLocaleString()} of ${stream.steps.toLocaleString()}${often}` : `${stream.steps.toLocaleString()}${often}`]);
         // the dates only, on one line
-        info.push(["Dates", `${stream.first.slice(0, 10)} \u2013 ${stream.last.slice(0, 10)}`, true]);
+        info.push(["Dates", `${stream.times[span.lo].slice(0, 10)} \u2013 ${stream.times[span.hi].slice(0, 10)}`, true]);
       }
     }
     $("v-info").replaceChildren(...info.filter(([, value]) => value).flatMap(([key, value, mono]) => [
@@ -714,14 +780,20 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
 
   function renderControls(now) {
     const stream = streamOf(now.stream);
-    const usesTime = now.time && stream.steps > 1;
+    const span = windowOf(stream);
+    // until the times of every file are in there is one step to look at, and no moving through them
+    const waiting = stream.pending > 0;
+    const usesTime = now.time && (waiting || span.hi > span.lo);
     $("c-time").hidden = !usesTime;
-    $("v-step").max = String(Math.max(0, stream.steps - 1));
+    $("v-step").min = String(span.lo);
+    $("v-step").max = String(span.hi);
     $("v-step").value = String(pick.step);
     $("v-when").textContent = stream.times[pick.step] || "";
-    $("v-prev").disabled = pick.step <= 0;
-    $("v-next").disabled = pick.step >= stream.steps - 1;
-    if (!usesTime) stopPlay();
+    $("v-step").disabled = $("v-play").disabled = waiting;
+    $("v-prev").disabled = waiting || pick.step <= span.lo;
+    $("v-next").disabled = waiting || pick.step >= span.hi;
+    $("c-time").title = waiting ? "The times of the files are still being read" : "";
+    if (!usesTime || waiting) stopPlay();
     const usesLevel = now.vertical && now.levels > 1;
     $("c-level").hidden = !usesLevel;
     if (usesLevel) {
@@ -752,23 +824,155 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   // the time: the slider and the arrows
   function updateTime(now) {
     const stream = streamOf(now.stream);
+    const span = windowOf(stream);
     $("v-step").value = String(pick.step);
     $("v-when").textContent = stream.times[pick.step] || "";
-    $("v-prev").disabled = pick.step <= 0;
-    $("v-next").disabled = pick.step >= stream.steps - 1;
+    $("v-prev").disabled = pick.step <= span.lo;
+    $("v-next").disabled = pick.step >= span.hi;
   }
   function setStep(step) {
     stopPlay();
     const now = inStream();
     if (!now) return;
     const stream = streamOf(now.stream);
-    pick.step = Math.min(Math.max(0, step), stream.steps - 1);
+    if (stream.pending > 0) return;
+    const span = windowOf(stream);
+    pick.step = Math.min(Math.max(span.lo, step), span.hi);
     renderControls(now);
     requestPlot(120);
   }
   $("v-step").addEventListener("input", (event) => setStep(Number(event.target.value)));
   $("v-prev").addEventListener("click", () => setStep(pick.step - 1));
   $("v-next").addEventListener("click", () => setStep(pick.step + 1));
+
+  // ---- the first and last year ----
+  // The years chosen cut each file type to a window of its steps, {lo, hi}: the first step of the first year to the
+  // last step of the last year, by the times of the file type (a file type with no dates is not cut). Everything that
+  // moves through time (the slider, the arrows, Play and its colour scale) stays in it. A blank box is no limit.
+  const WHOLE = /^-?\d+$/;
+  const yearOf = (stamp) => parseInt(stamp, 10);
+  // the first and last year of the output, once the times of every file are in (else null)
+  function runYears() {
+    if (!catalogue || catalogue.streams.some((stream) => stream.pending > 0)) return null;
+    const dated = catalogue.streams.filter((stream) => stream.has_times);
+    if (!dated.length) return null;
+    return [Math.min(...dated.map((stream) => yearOf(stream.times[0]))), Math.max(...dated.map((stream) => yearOf(stream.times[stream.times.length - 1])))];
+  }
+  // the years as numbers (null for a blank box), or an error in words
+  function yearsAsked() {
+    for (const [key, label] of [["first", "First year"], ["last", "Last year"]]) {
+      if (pick[key] !== "" && !WHOLE.test(pick[key])) return { error: `${label} is a whole number, like 1990.`, field: key };
+    }
+    const first = pick.first === "" ? null : Number(pick.first);
+    const last = pick.last === "" ? null : Number(pick.last);
+    if (first !== null && last !== null && first > last) return { error: "The first year is after the last.", field: "last" };
+    return { first, last };
+  }
+  // the steps of a file type in the years (lo > hi: none of them are)
+  function stepsIn(stream, first, last) {
+    const key = `${first}|${last}`;
+    if (stream._in && stream._in.key === key) return stream._in;
+    let lo = 0, hi = stream.steps - 1;
+    while (lo <= hi && first !== null && yearOf(stream.times[lo]) < first) lo += 1;
+    while (hi >= lo && last !== null && yearOf(stream.times[hi]) > last) hi -= 1;
+    stream._in = { key, lo, hi };
+    return stream._in;
+  }
+  // the window the years leave of a file type: all of it if they are blank, wrong or leave nothing
+  function windowOf(stream) {
+    const all = { lo: 0, hi: Math.max(0, stream.steps - 1) };
+    if (!stream.has_times || stream.pending > 0) return all;
+    const asked = yearsAsked();
+    if (asked.error || (asked.first === null && asked.last === null)) return all;
+    const found = stepsIn(stream, asked.first, asked.last);
+    return found.lo > found.hi ? all : found;
+  }
+  // what is wrong with the years: {field, text}, or null. A year outside the output is only mentioned
+  function yearsProblem() {
+    const asked = yearsAsked();
+    if (asked.error) return { field: asked.field, text: asked.error };
+    const run = runYears();
+    if (!run || (asked.first === null && asked.last === null)) return null;
+    const first = asked.first === null ? run[0] : asked.first;
+    const last = asked.last === null ? run[1] : asked.last;
+    if (first > run[1] || last < run[0]) return { field: "last", text: `There is no output between ${first} and ${last}. It is from ${run[0]} to ${run[1]}.` };
+    const now = inStream();
+    if (now) {
+      const stream = streamOf(now.stream);
+      const found = stepsIn(stream, asked.first, asked.last);
+      if (stream.has_times && found.lo > found.hi) return { field: "last", text: `This file type has no output between ${first} and ${last}. It is from ${yearOf(stream.times[0])} to ${yearOf(stream.times[stream.times.length - 1])}.` };
+    }
+    return null;
+  }
+
+  // the boxes, the tracker of the times being read and what is wrong, all from the state
+  function renderYears() {
+    const dated = Boolean(catalogue) && catalogue.streams.some((stream) => stream.has_times || stream.pending > 0);
+    $("c-years").hidden = !(state.view === "viewer" && dated);
+    if ($("c-years").hidden) return;
+    const reading = Boolean(state.times) && !state.times.error;
+    const run = runYears();
+    for (const key of ["first", "last"]) {
+      const box = $(`v-${key}`);
+      // the arrow lists the years of the output, and any year can be typed
+      box.yearChoices = run ? Array.from({ length: run[1] - run[0] + 1 }, (_, i) => run[0] + i) : [];
+      box.placeholder = run ? String(run[key === "first" ? 0 : 1]) : "…";
+      box.disabled = Boolean(state.times);
+      if (document.activeElement !== box) box.value = pick[key];
+      box.title = state.times ? "Waiting for the times of the files to be read" : "";
+    }
+    const total = reading ? state.times.total : 0;
+    $("v-times").hidden = !reading;
+    $("v-times-meter").hidden = !reading;
+    if (reading) {
+      $("v-times-text").textContent = `Reading the times of the files: ${state.times.done.toLocaleString()}/${total.toLocaleString()}`;
+      $("v-times-bar").style.width = `${total ? Math.round((100 * state.times.done) / total) : 0}%`;
+    }
+    const problem = yearsProblem();
+    for (const key of ["first", "last"]) {
+      const bad = Boolean(problem) && (problem.field === key || (problem.field === "last" && key === "first" && !yearsAsked().error));
+      $(`v-${key}`).classList.toggle("is-invalid", bad);
+      $(`v-${key}`).setAttribute("aria-invalid", String(bad));
+    }
+    // one line: the times could not be read, or what is wrong, or a year outside the output
+    let note = "", error = false;
+    if (state.times && state.times.error) { note = state.times.error; error = true; }
+    else if (problem) { note = problem.text; error = true; }
+    else if (run) {
+      const asked = yearsAsked();
+      if (asked.first !== null && asked.first < run[0]) note = `The output starts in ${run[0]}.`;
+      else if (asked.last !== null && asked.last > run[1]) note = `The output ends in ${run[1]}.`;
+    }
+    $("v-years-note").hidden = !note;
+    $("v-years-note").textContent = note;
+    $("v-years-note").classList.toggle("is-error", error);
+  }
+
+  // a year is typed or picked: once it has settled the file types are cut to it, and the map moves into it
+  let yearsTimer = null;
+  function yearsEdited() {
+    // not at every key: "1990" is typed as 1, 19, 199, none of which is the year wanted
+    clearTimeout(yearsTimer);
+    yearsTimer = setTimeout(applyYears, 400);
+  }
+  function applyYears() {
+    stopPlay();
+    scale = null;
+    renderYears();
+    const now = inStream();
+    if (!now) return;
+    const span = windowOf(streamOf(now.stream));
+    const step = Math.min(Math.max(span.lo, pick.step), span.hi);
+    const moved = step !== pick.step;
+    pick.step = step;
+    renderSide();
+    if (moved) requestPlot(0);
+  }
+  for (const key of ["first", "last"]) {
+    const box = $(`v-${key}`);
+    withChoices(box, []);
+    box.addEventListener("input", () => { pick[key] = box.value.trim(); yearsEdited(); });
+  }
 
   // ---- playing: an animation ----
   // Frames are fetched ahead (a few at a time) and shown on a clock, so the map is never covered by a "reading"
@@ -813,8 +1017,9 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     return promise;
   }
   const stepsAhead = (from, count) => {
-    const total = streamOf(inStream().stream).steps;
-    return Array.from({ length: Math.min(count, total) }, (_, i) => (from + i) % total);
+    const span = windowOf(streamOf(inStream().stream));
+    const total = span.hi - span.lo + 1;
+    return Array.from({ length: Math.min(count, total) }, (_, i) => span.lo + ((from - span.lo + i) % total));
   };
   const readyAhead = (from, count) => stepsAhead(from, count).filter((step) => ready.has(keyFor(step))).length;
   // keeps FETCHING requests going for the frames from playNext on, until AHEAD of them have been asked for
@@ -826,7 +1031,11 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     }
   }
 
-  const scaleKey = () => JSON.stringify([pick.names, pick.stream, pick.level]);
+  // the years chosen are part of what the scale is for
+  const scaleKey = () => {
+    const span = pick.stream === null ? null : windowOf(streamOf(pick.stream));
+    return JSON.stringify([pick.names, pick.stream, pick.level, span && span.lo, span && span.hi]);
+  };
   // the range of the variable over the whole run, once for the variables and level shown
   async function ensureScale(run) {
     if (scale && scale.key === scaleKey()) return true;
@@ -835,7 +1044,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("v-play-status").textContent = "Preparing the animation…";
     let reply;
     try {
-      reply = await (await fetch(`api/limits?${query({ stream: String(pick.stream), vars: JSON.stringify(pick.names), level: String(pick.level) })}`, { cache: "no-store" })).json();
+      reply = await (await fetch(`api/limits?${query({ stream: String(pick.stream), vars: JSON.stringify(pick.names), level: String(pick.level), first: String(windowOf(streamOf(pick.stream)).lo), last: String(windowOf(streamOf(pick.stream)).hi) })}`, { cache: "no-store" })).json();
     } catch (error) {
       reply = { ok: false, error: "ncviewer is no longer running." };
     }
@@ -867,7 +1076,10 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
   async function startPlay() {
     const now = inStream();
     if (!now) return;
-    const total = streamOf(now.stream).steps;
+    const stream = streamOf(now.stream);
+    if (stream.pending > 0) return;
+    const span = windowOf(stream);
+    const total = span.hi - span.lo + 1;
     if (total < 2) return;
     // nothing else is to draw while it plays
     clearTimeout(plotTimer);
@@ -876,7 +1088,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("plot-error").hidden = true;
     const run = ++playRun;
     setPlaying(true);
-    playNext = pick.step >= total - 1 ? 0 : pick.step + 1;
+    playNext = pick.step >= span.hi ? span.lo : pick.step + 1;
     const current = () => playing && run === playRun;
     let due = 0;
     while (current()) {
@@ -909,7 +1121,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       $("v-play-status").textContent = "";
       await showFrame(reply, wanted);
       if (!current()) return;
-      playNext = (wanted + 1) % total;
+      playNext = span.lo + ((wanted - span.lo + 1) % total);
       topUp();
     }
   }
@@ -1101,6 +1313,9 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     if (state.view === "files") showError(state.error);
     if (state.view === "scanning") renderScan();
     if (state.view === "viewer" && state.catalogue_number !== catalogueNumber) loadCatalogue();
+    // every file's times have come in
+    else if (state.view === "viewer" && state.times_number !== timesNumber) refreshTimes();
+    if (state.view === "viewer") renderYears();
     renderBar();
     return true;
   }

@@ -237,3 +237,109 @@ def test_limits_span_zero_are_symmetric(tmp_path):
     ).to_netcdf(tmp_path / "a.nc")
     found = catalogue.scan(str(tmp_path), 0)
     assert found.limits(0, ["anomaly"]) == (-5.0, 5.0, True)
+
+
+# ---- the times read in the background ----
+
+def _time_fields(streams):
+    return [
+        {key: stream[key] for key in ("steps", "times", "has_times", "resolution", "calendar", "unreadable", "pending")}
+        for stream in streams
+    ]
+
+
+def test_a_scan_that_does_not_wait_has_the_first_times_only(simulation):
+    quick = catalogue.scan(simulation, 2, wait=False)
+    try:
+        assert not quick.times_complete
+        # the first file of each file type: one time, its 23 other files not read yet
+        assert [(stream["steps"][0][0], len(stream["steps"]), stream["pending"]) for stream in quick.streams] == [
+            ("2000-01-16 12:00:00", 1, 23), ("2000-01-16 12:00:00", 1, 23),
+        ]
+        # the variables are there, and so is a map of the first time
+        assert set(quick.summary()["variables"]) == {"votemper", "sossheig", "chl"}
+        assert quick.summary()["times_complete"] is False
+        data, when = quick.field(1, ["chl"], 0, 0)
+        assert when == "2000-01-16 12:00:00" and np.isfinite(data.values).any()
+        told = []
+        quick.read_times(lambda done, total: told.append((done, total)))
+        assert quick.times_complete
+        # counted over every file: the two first files were in already
+        assert told[0] == (2, 48) and told[-1] == (48, 48) and [done for done, _ in told] == sorted(done for done, _ in told)
+        full = catalogue.scan(simulation, 2)
+        assert _time_fields(quick.streams) == _time_fields(full.streams)
+        assert quick.summary()["streams"][0]["step_files"] == list(range(24))
+        full.close()
+    finally:
+        quick.close()
+
+
+def test_the_times_are_read_in_a_pool_of_processes(simulation, monkeypatch):
+    monkeypatch.setattr(catalogue, "PARALLEL_FROM", 4)
+    quick = catalogue.scan(simulation, 2, wait=False)
+    try:
+        quick.read_times(cores=2)
+        assert quick.times_complete and [stream["pending"] for stream in quick.streams] == [0, 0]
+        monkeypatch.setattr(catalogue, "PARALLEL_FROM", 10_000)
+        assert _time_fields(quick.streams) == _time_fields(catalogue.scan(simulation, 2).streams)
+    finally:
+        quick.close()
+
+
+def test_times_read_here_are_read_under_the_lock(simulation, monkeypatch):
+    # the server's map reads are in other threads, and netCDF-C and HDF5 are not thread-safe
+    monkeypatch.setattr(catalogue, "PARALLEL_FROM", 10_000)
+    quick = catalogue.scan(simulation, 2, wait=False)
+    real, held = times.file_times, []
+    monkeypatch.setattr(times, "file_times", lambda path: held.append(catalogue.LOCK._is_owned()) or real(path))
+    try:
+        quick.read_times()
+        assert len(held) == 46 and all(held)
+    finally:
+        quick.close()
+
+
+def test_reading_the_times_can_be_stopped(simulation, monkeypatch):
+    monkeypatch.setattr(catalogue, "PARALLEL_FROM", 10_000)
+    quick = catalogue.scan(simulation, 2, wait=False)
+    try:
+        calls = []
+        with pytest.raises(catalogue.Stopped):
+            quick.read_times(stopped=lambda: calls.append(1) or len(calls) > 10)
+        # it is as it was, and can be used
+        assert not quick.times_complete and quick.streams[0]["pending"] == 23
+        assert quick.field(1, ["chl"], 0, 0)[1] == "2000-01-16 12:00:00"
+        # what was read is kept in the cache, so it is not read again
+        kept = times.load_cache([path for stream in quick.streams for path in stream["files"]])
+        assert 10 <= len(kept) <= 14
+        quick.close()
+        # closing stops it too
+        with pytest.raises(catalogue.Stopped):
+            quick.read_times()
+    finally:
+        quick.close()
+
+
+def test_a_scan_that_does_not_wait_uses_the_cache(simulation):
+    catalogue.scan(simulation, 2).close()
+    again = catalogue.scan(simulation, 2, wait=False)
+    try:
+        # everything was kept: nothing is pending, and nothing is left to read
+        assert again.times_complete and [stream["pending"] for stream in again.streams] == [0, 0]
+        assert len(again.streams[0]["steps"]) == 24
+        again.read_times(lambda done, total: pytest.fail("nothing is to be read"))
+    finally:
+        again.close()
+
+
+def test_limits_of_some_of_the_steps(found):
+    chl = 1
+    whole = found.limits(chl, ["chl"], 0)
+    one = found.limits(chl, ["chl"], 0, first=2, last=2)
+    data, _ = found.field(chl, ["chl"], 2, 0)
+    assert one[:2] == (pytest.approx(float(np.nanmin(data.values))), pytest.approx(float(np.nanmax(data.values))))
+    both = found.limits(chl, ["chl"], 0, first=2, last=3)
+    assert one[0] >= both[0] and one[1] <= both[1] and both[1] < whole[1]
+    # steps beyond the run, and a first after the last, are brought in
+    assert found.limits(chl, ["chl"], 0, first=99, last=200)[:2] == found.limits(chl, ["chl"], 0, first=23, last=23)[:2]
+    assert found.limits(chl, ["chl"], 0, first=5, last=2)[:2] == found.limits(chl, ["chl"], 0, first=2, last=2)[:2]

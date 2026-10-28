@@ -5,7 +5,11 @@ many GB.
 
 The variables are read from the first file of each stream (every file of a
 stream holds the same ones), as OceanVal's analysis.streams does; the times
-from every file (see ncviewer.times).
+from every file (see ncviewer.times). Reading every file's times is the long
+part for output of thousands of files, so scan(wait=False) returns a
+Catalogue that has only the first file of each stream's times (and those
+kept in the cache), and Catalogue.read_times, run in the background, reads
+the rest and then gives each stream all its times.
 """
 
 import concurrent.futures
@@ -29,6 +33,17 @@ LOCK = threading.RLock()
 # read in a pool of processes once there are this many files to read
 PARALLEL_FROM = 40
 WORKERS = 4
+
+
+def default_cores():
+    """The processes the times are read by in the background: half the cores
+    this process may use (and at least 1), so the viewer keeps the rest."""
+    try:
+        cores = len(os.sched_getaffinity(0))
+    except AttributeError:
+        # macOS and Windows
+        cores = os.cpu_count() or 1
+    return max(1, cores // 2)
 
 # the names of vertical dimensions, as OceanVal tells them
 _VERTICAL = ("depth", "lev", "sig", "s_rho", "z", "height", "nz", "deptht", "depthu", "depthv", "depthw")
@@ -198,39 +213,49 @@ def open_dataset(path):
 
 # ---- the scan ----
 
-def _read_times(paths, report, stopped):
-    """{path: times} of every one of paths, those kept from before first,
-    the rest read in a pool of processes when there are many."""
-    read = file_times.load_cache(paths)
+def _read_times(paths, report, stopped, cores=WORKERS, locked=False, read=None):
+    """{path: times} of every one of paths: those in read (by default those
+    kept in the cache from before) and the rest, read in a pool of cores
+    processes when there are many. report(done) is told how many of paths
+    are in. locked: the files read in this process are read under LOCK, as
+    other threads are reading files (what is read is kept in the cache even
+    if this is stopped, as it is not read again)."""
+    read = dict(file_times.load_cache(paths) if read is None else read)
     todo = [path for path in paths if path not in read]
-    report(len(read))
+    report(sum(path in read for path in paths))
     fresh = {}
-    if len(todo) >= PARALLEL_FROM:
-        context = multiprocessing.get_context("spawn")
-        try:
-            with concurrent.futures.ProcessPoolExecutor(WORKERS, mp_context=context) as pool:
-                futures = {pool.submit(file_times.file_times, path): path for path in todo}
-                try:
-                    for future in concurrent.futures.as_completed(futures):
-                        if stopped():
-                            raise Stopped()
-                        fresh[futures[future]] = future.result()
-                        report(len(read) + len(fresh))
-                except BaseException:
-                    for future in futures:
-                        future.cancel()
-                    raise
-        except (concurrent.futures.process.BrokenProcessPool, OSError):
-            # workers that could not start (a __main__ they cannot import): the rest are read here
-            pass
-    for path in todo:
-        if path in fresh:
-            continue
-        if stopped():
-            raise Stopped()
-        fresh[path] = file_times.file_times(path)
-        report(len(read) + len(fresh))
-    file_times.save_cache(fresh)
+    try:
+        if len(todo) >= PARALLEL_FROM:
+            context = multiprocessing.get_context("spawn")
+            try:
+                with concurrent.futures.ProcessPoolExecutor(cores, mp_context=context) as pool:
+                    futures = {pool.submit(file_times.file_times, path): path for path in todo}
+                    try:
+                        for future in concurrent.futures.as_completed(futures):
+                            if stopped():
+                                raise Stopped()
+                            fresh[futures[future]] = future.result()
+                            report(len(paths) - len(todo) + len(fresh))
+                    except BaseException:
+                        for future in futures:
+                            future.cancel()
+                        raise
+            except (concurrent.futures.process.BrokenProcessPool, OSError):
+                # workers that could not start (a __main__ they cannot import): the rest are read here
+                pass
+        for path in todo:
+            if path in fresh:
+                continue
+            if stopped():
+                raise Stopped()
+            if locked:
+                with LOCK:
+                    fresh[path] = file_times.file_times(path)
+            else:
+                fresh[path] = file_times.file_times(path)
+            report(len(paths) - len(todo) + len(fresh))
+    finally:
+        file_times.save_cache(fresh)
     read.update(fresh)
     return read
 
@@ -258,10 +283,14 @@ def resolution(times):
     return "daily" if step == 1 else f"{step}-daily"
 
 
-def scan(simdir, ndown, exclude="", require="", progress=lambda **_: None, stopped=lambda: False):
+def scan(simdir, ndown, exclude="", require="", progress=lambda **_: None, stopped=lambda: False, wait=True):
     """The Catalogue of the output files ndown directories below simdir that
     pass the file filters. progress(phase=, done=, total=) is told how far it
-    has got, and stopped() is asked whether to give up (raising Stopped)."""
+    has got, and stopped() is asked whether to give up (raising Stopped).
+    With wait, the times of every file are read first. Without, only those of
+    the first file of each file type are (and any the cache has), so that
+    the Catalogue is there at once: each stream says how many of its files
+    are "pending", and Catalogue.read_times reads the rest."""
     simdir = os.path.abspath(os.path.expanduser(simdir.strip()))
     paths = found_files.simulation_paths(
         simdir, int(ndown), exclude.split() or None, require.split() or None
@@ -272,19 +301,26 @@ def scan(simdir, ndown, exclude="", require="", progress=lambda **_: None, stopp
     for path in sorted(paths, key=natural_key):
         groups.setdefault(found_files.file_pattern(path), []).append(path)
 
-    progress(phase="times", done=0, total=len(paths))
-    read = _read_times(
-        paths, lambda done: progress(phase="times", done=done, total=len(paths)), stopped
-    )
+    if wait:
+        progress(phase="times", done=0, total=len(paths))
+        read = _read_times(
+            paths, lambda done: progress(phase="times", done=done, total=len(paths)), stopped
+        )
+    else:
+        read = file_times.load_cache(paths)
 
     streams = []
     progress(phase="variables", done=0, total=len(groups))
     for number, (pattern, members) in enumerate(groups.items()):
         if stopped():
             raise Stopped()
+        if members[0] not in read:
+            # the first file's times give the time variable, which the variables are told by
+            with LOCK:
+                read[members[0]] = file_times.file_times(members[0])
         streams.append(_stream(number, pattern, members, read))
         progress(phase="variables", done=number + 1, total=len(groups))
-    return Catalogue(simdir, int(ndown), streams)
+    return Catalogue(simdir, int(ndown), streams, read)
 
 
 def _stream(number, pattern, members, read):
@@ -300,12 +336,33 @@ def _stream(number, pattern, members, read):
                 is_fvcom = fvcom.looks_like_fvcom(ds)
     except Exception as problem:  # noqa: BLE001 - a stream that cannot be read is reported
         error = f"{os.path.basename(first)} could not be read: {problem}"
-    # every time of the stream, in order, with the file and index it is at
+    return {
+        "id": number,
+        "pattern": pattern,
+        "files": members,
+        "variables": variables,
+        "time_name": time_name,
+        "time_dim": time_dim,
+        "error": error,
+        "fvcom": is_fvcom,
+        **_steps_of(members, read),
+    }
+
+
+def _steps_of(members, read):
+    """The times of a stream's files that are in read ({path: times}): every
+    time of the stream in order with the file and index it is at ("steps"),
+    their names ("times"), whether they are dates, how often, the calendar,
+    how many files could not be read, and how many are not in read yet
+    ("pending", which are left out: they are not files with no times)."""
     steps = []
     calendar = None
-    unreadable = 0
+    unreadable = pending = 0
     for index, path in enumerate(members):
-        times = read.get(path) or {}
+        if path not in read:
+            pending += 1
+            continue
+        times = read[path] or {}
         if times.get("error"):
             unreadable += 1
         calendar = calendar or times.get("calendar")
@@ -318,20 +375,13 @@ def _stream(number, pattern, members, read):
         steps.sort(key=lambda step: (step[0], step[1]))
     stamps = [stamp for stamp, _, _ in steps]
     return {
-        "id": number,
-        "pattern": pattern,
-        "files": members,
-        "variables": variables,
-        "time_name": time_name,
-        "time_dim": time_dim,
         "calendar": calendar,
         "steps": steps,
         "times": [stamp if stamp is not None else os.path.basename(members[index]) for stamp, index, _ in steps],
         "has_times": all(stamp is not None for stamp in stamps) and bool(stamps),
         "resolution": resolution([stamp for stamp in stamps if stamp is not None]),
         "unreadable": unreadable,
-        "error": error,
-        "fvcom": is_fvcom,
+        "pending": pending,
     }
 
 
@@ -339,13 +389,44 @@ class Catalogue:
     """The streams of a simulation's output (see scan), and the reading of
     the slices of its variables that the viewer plots."""
 
-    def __init__(self, simdir, ndown, streams):
+    def __init__(self, simdir, ndown, streams, read=None):
         self.simdir = simdir
         self.ndown = ndown
         self.streams = streams
+        # {path: times} of the files read so far (see read_times)
+        self._read = read if read is not None else {}
+        self.times_complete = all(stream["pending"] == 0 for stream in streams)
+        self._stop = threading.Event()
         self._open = OrderedDict()
         # stream -> its FVCOM mesh (see mesh)
         self._meshes = {}
+
+    # ---- the times of the files not read yet ----
+
+    def read_times(self, progress=lambda done, total: None, stopped=lambda: False, cores=None):
+        """Read the times of the files scan(wait=False) did not (in a pool of
+        cores processes, by default half the machine's, when there are many)
+        and give each stream all its times: its steps, times, resolution and
+        the rest are made again and put in place at the end, all of them at
+        once (streams is a new list, so what reads one stream sees it whole,
+        as it was or as it is). progress(done, total) is told how many of the
+        files are in, and stopped() is asked whether to give up (raising
+        Stopped, as close does)."""
+        if self.times_complete:
+            return
+        paths = [path for stream in self.streams for path in stream["files"]]
+        read = _read_times(
+            paths, lambda done: progress(done, len(paths)), lambda: stopped() or self._stop.is_set(),
+            cores or default_cores(), locked=True, read=self._read,
+        )
+        streams = []
+        for stream in self.streams:
+            made = dict(stream)
+            made.update(_steps_of(stream["files"], read))
+            streams.append(made)
+        self._read = read
+        self.streams = streams
+        self.times_complete = True
 
     # ---- what the viewer is told ----
 
@@ -370,6 +451,9 @@ class Catalogue:
                 "calendar": stream["calendar"],
                 "resolution": stream["resolution"],
                 "unreadable": stream["unreadable"],
+                "pending": stream["pending"],
+                # the file (its number in the stream) each step is in, to say how many files some of the steps are in
+                "step_files": [index for _, index, _ in stream["steps"]],
                 "error": stream["error"],
                 "fvcom": stream.get("fvcom", False),
             })
@@ -396,6 +480,7 @@ class Catalogue:
             "simdir": self.simdir,
             "ndown": self.ndown,
             "files": sum(len(stream["files"]) for stream in self.streams),
+            "times_complete": self.times_complete,
             "streams": streams,
             "variables": dict(sorted(variables.items(), key=lambda item: item[0].lower())),
         }
@@ -430,6 +515,8 @@ class Catalogue:
         return ds
 
     def close(self):
+        # stops the times being read, too
+        self._stop.set()
         with LOCK:
             for ds in self._open.values():
                 ds.close()
@@ -511,9 +598,10 @@ class Catalogue:
         total.attrs = {"n_missing": n_missing}
         return total, (when if about["time_dim"] else None)
 
-    def limits(self, stream, names, level=0, missing=(), samples=12):
-        """The range of the variable names (or their sum) over the whole run
-        at level, from up to samples time steps spread evenly through it (one
+    def limits(self, stream, names, level=0, missing=(), samples=12, first=0, last=None):
+        """The range of the variable names (or their sum) over the run (or
+        the steps first to last of it: the years chosen) at level, from up to
+        samples time steps spread evenly through it (one
         slice is read for each, so a long run costs a few reads, not one for
         every step): (low, high, symmetric), symmetric being whether the
         values span 0 (as plotting.colour_limits says). None if every
@@ -521,10 +609,13 @@ class Catalogue:
         from .plotting import colour_limits
 
         count = len(self.streams[int(stream)]["steps"])
+        last = count - 1 if last is None else min(max(int(last), 0), count - 1)
+        first = min(max(int(first), 0), last)
+        count = last - first + 1
         if count <= samples:
-            steps = list(range(count))
+            steps = list(range(first, last + 1))
         else:
-            steps = sorted({round(i * (count - 1) / (samples - 1)) for i in range(samples)})
+            steps = sorted({first + round(i * (count - 1) / (samples - 1)) for i in range(samples)})
         low = high = None
         for step in steps:
             data, _ = self.field(stream, names, step, level, missing)

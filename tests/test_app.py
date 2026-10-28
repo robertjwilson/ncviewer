@@ -39,6 +39,14 @@ def _wait_for(app, view, seconds=60):
     assert app.view == view
 
 
+def _wait_for_times(app, seconds=60):
+    """The times of every file are read in the background once the viewer has opened."""
+    deadline = time.monotonic() + seconds
+    while (app.times is not None or not app.catalogue.times_complete) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert app.catalogue.times_complete and app.times is None
+
+
 def test_the_token_is_needed(running):
     app, base, token = running
     with pytest.raises(urllib.error.HTTPError) as refused:
@@ -66,6 +74,7 @@ def test_probe_then_view(running, simulation):
     assert app.view == "files"
     assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2", "missing": '[["-999",""]]'})["ok"] is True
     _wait_for(app, "viewer")
+    _wait_for_times(app)
     summary = _get(base, "api/catalogue", token=token)
     assert summary["files"] == 48
     reply = _get(base, "api/plot", token=token, stream=0, vars='["votemper"]', step=3, level=1)
@@ -165,3 +174,84 @@ def test_parse_names():
     for bad in ("x", '{"a": 1}', "[1]"):
         with pytest.raises(ValueError):
             ncapp.parse_names(bad)
+
+
+@pytest.fixture
+def slow_times(monkeypatch):
+    """The background reading of the times of the files (those after the first of each file type, which are
+    read before the viewer opens) waits for the gate to be opened."""
+    from ncviewer import catalogue
+
+    gate = threading.Event()
+    real = catalogue._read_times
+
+    def gated(*args, **kwargs):
+        gate.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(catalogue, "_read_times", gated)
+    yield gate
+    gate.set()
+
+
+def test_the_viewer_opens_while_the_times_are_read(running, simulation, slow_times):
+    app, base, token = running
+    assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2"})["ok"] is True
+    _wait_for(app, "viewer")
+    state = _get(base, "api/state", token=token)
+    # the viewer is there, and says how many of the files' times are in
+    assert state["view"] == "viewer" and state["times"]["total"] == 48 and state["times_number"] == 0
+    summary = _get(base, "api/catalogue", token=token)
+    assert summary["times_complete"] is False
+    assert [(stream["steps"], stream["pending"]) for stream in summary["streams"]] == [(1, 23), (1, 23)]
+    # the first map can be drawn meanwhile
+    reply = _get(base, "api/plot", token=token, stream=1, vars='["chl"]', step=0, level=1)
+    assert reply["ok"] and reply["when"] == "2000-01-16 12:00:00"
+    # the times come in, and the page is told
+    slow_times.set()
+    deadline = time.monotonic() + 30
+    while app.times is not None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    state = _get(base, "api/state", token=token)
+    assert state["times"] is None and state["times_number"] == 1
+    summary = _get(base, "api/catalogue", token=token)
+    assert summary["times_complete"] is True
+    assert [(stream["steps"], stream["pending"]) for stream in summary["streams"]] == [(24, 0), (24, 0)]
+    assert summary["streams"][0]["step_files"] == list(range(24))
+    # Play's colour scale for some of the steps: those of 2001 (steps 12 to 23) differ from those of 2000
+    year_2000 = _get(base, "api/limits", token=token, stream=1, vars='["chl"]', level=1, first=0, last=11)
+    year_2001 = _get(base, "api/limits", token=token, stream=1, vars='["chl"]', level=1, first=12, last=23)
+    assert year_2000["ok"] and year_2001["ok"] and year_2001["vmin"] > year_2000["vmin"]
+
+
+def test_going_back_stops_the_times_being_read(running, simulation, slow_times):
+    app, base, token = running
+    assert _post(base, "api/continue", token, {"simdir": simulation, "ndown": "2"})["ok"] is True
+    _wait_for(app, "viewer")
+    assert app.times is not None
+    _post(base, "api/back", token, {})
+    assert app.view == "files" and app.times is None
+    # what was waiting is let go, and the reading stops: it does not say it is done
+    slow_times.set()
+    time.sleep(0.5)
+    assert app.times is None and app.times_number == 0
+    assert _get(base, "api/state", token=token)["times"] is None
+
+
+def test_a_new_scan_replaces_the_one_reading(running, simulation, slow_times):
+    app, base, token = running
+    form = {"simdir": simulation, "ndown": "2"}
+    assert _post(base, "api/continue", token, form)["ok"]
+    _wait_for(app, "viewer")
+    first = app.catalogue
+    assert _post(base, "api/continue", token, form)["ok"]
+    deadline = time.monotonic() + 30
+    while app.catalogue is first and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert app.catalogue is not first
+    slow_times.set()
+    deadline = time.monotonic() + 30
+    while app.times is not None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    # one set of times came in, not two
+    assert app.times_number == 1 and app.catalogue.times_complete

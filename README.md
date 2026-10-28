@@ -2,7 +2,8 @@
 
 A window in your browser for looking at what a model simulation's output holds. Type in
 the directory of the output and ncviewer finds every netCDF file, groups them into file
-types, and reads the variables and times they hold. Then search for a variable and map it.
+types, and reads the variables and times they hold. Then search for a variable and map it,
+in the years you choose.
 
 Its look and its first page come from the [OceanVal](https://github.com/PlymouthMarineLaboratory/OceanVal)
 window. How it draws a map comes from [ncplot](https://github.com/pmlmodelling/ncplot).
@@ -52,12 +53,16 @@ and so does Ctrl+C.
   variable, before the map is drawn, so they are left blank and do not stretch the colour
   scale. Go Back to change them.
 
-ncviewer counts the files as you type. **Continue** reads the times of every file (only
-the time variable is read) and the variables of the first file of each file type. Files
-are grouped into types by their names with the dates taken out, so `..._20000101_grid_T.nc`
-and `..._20000201_grid_T.nc` are one type. What it reads is kept in `~/.ncviewercache`
-(or the file `$NCVIEWERCACHE` names), so a directory opened again reads only new or
-changed files.
+ncviewer counts the files as you type. **Continue** reads the variables of the first file of
+each file type, and opens the viewer straight away. Files are grouped into types by their
+names with the dates taken out, so `..._20000101_grid_T.nc` and `..._20000201_grid_T.nc` are
+one type. The times of the files are then read in the background, while you use the viewer
+(only the time variable of each file is read, in several processes: half of the machine's
+cores, so the rest are left to you). The viewer counts them ("Reading the times of the
+files: 1,240/3,560"). Until they are in you can map the first time of any variable, but the
+years and the time cannot be chosen. What it reads is kept in `~/.ncviewercache` (or the
+file `$NCVIEWERCACHE` names), so a directory opened again has its times at once, and reads
+only new or changed files.
 
 ### Page 2: the viewer
 
@@ -72,6 +77,13 @@ changed files.
   missing in the sum. If the units differ, the sum is still drawn, so check they make sense added. Below
   that is what the variable is (its
   dimensions, files and times), followed by the controls:
+  - **Years**: a **First year** and a **Last year**, which keep everything below to those years.
+    Click the arrow in a box for the years of the output, or type one. A blank box is no limit.
+    The Time slider, its arrows and **Play** (and Play's colour scale) then go through only those
+    years, and the file type's details say how many times and files they hold ("Files 120 of
+    444"). A first year after the last, or years with no output in them, are said and not used,
+    and a year beyond the output is only mentioned. The years are for every file type, and are
+    forgotten when you open other output. They can be chosen once the times of the files are in.
   - **Time**: a slider, the arrow buttons (or the arrow keys), and **Play**, which animates
     the simulation from the time shown, and starts again at the beginning after the last.
     The frames are read ahead while it plays, so the map is not covered or blanked between

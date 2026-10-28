@@ -123,7 +123,7 @@ const GUI = (() => {
   }
 
   function openChoices(input) {
-    if (!input.yearChoices || input.disabled) return;
+    if (!input.yearChoices || !input.yearChoices.length || input.disabled) return;
     if (!choiceList) {
       choiceList = el("ul", { class: "combo__list year-list", role: "listbox", hidden: true });
       document.body.append(choiceList);

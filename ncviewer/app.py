@@ -31,6 +31,8 @@ PAGE_TIMEOUT = 15
 HIDDEN_PAGE_TIMEOUT = 30 * 60
 # how long a request for the state is held when nothing changes
 STATE_WAIT = 20
+# the least time, in seconds, between telling the page how many files' times have been read
+TIMES_NEWS = 0.25
 # the most folders listed as the directory box is typed in
 MAX_FOLDERS = 40
 
@@ -97,6 +99,10 @@ class App:
         self.error = None
         self.catalogue = None
         self.catalogue_number = 0
+        # how far the times of the files not read at first are being read (ncviewer.catalogue.Catalogue.read_times),
+        # {"done", "total"} (or "error"), None when they are all in; and how many times they have all come in
+        self.times = None
+        self.times_number = 0
         self._scan_number = 0
         # page -> when it was last heard from, whether its tab is hidden, and its requests waiting
         self.pages = {}
@@ -132,6 +138,8 @@ class App:
                 "scan": dict(self.scan) if self.scan else None,
                 "error": self.error,
                 "catalogue_number": self.catalogue_number if self.catalogue else None,
+                "times": dict(self.times) if self.times else None,
+                "times_number": self.times_number,
                 "coast": _has_geoviews(),
                 # an FVCOM mesh's coastline needs only cartopy (plotting.mesh_coastline)
                 "coast_mesh": _has_cartopy(),
@@ -146,7 +154,10 @@ class App:
         return found
 
     def start_scan(self, form):
-        """Read what the files hold, in a thread, then show the viewer."""
+        """Read what the files hold, in a thread, then show the viewer. That
+        is the variables of each file type and the times of its first file;
+        the times of the other files are read after, in the background (see
+        _scan), while the viewer is used."""
         setup = {key: str(form.get(key, "")).strip() for key in ("simdir", "ndown", "exclude", "require", "missing")}
         try:
             missing = parse_missing(setup["missing"])
@@ -166,6 +177,7 @@ class App:
             self.missing = missing
             self.view = "scanning"
             self.error = None
+            self.times = None
             self.scan = {"phase": "files", "done": 0, "total": found["files"]}
         self._notify()
         threading.Thread(target=self._scan, args=(number, setup), daemon=True).start()
@@ -182,7 +194,7 @@ class App:
         try:
             found = catalogue.scan(
                 setup["simdir"], setup["ndown"], setup["exclude"], setup["require"],
-                progress=progress, stopped=lambda: number != self._scan_number,
+                progress=progress, stopped=lambda: number != self._scan_number, wait=False,
             )
         except catalogue.Stopped:
             return
@@ -201,12 +213,45 @@ class App:
         self.catalogue_number += 1
         self.view = "viewer"
         self.scan = None
+        self.times = None if found.times_complete else {
+            "done": 0, "total": sum(len(stream["files"]) for stream in found.streams),
+        }
         self._notify()
+        if found.times_complete:
+            return
+        # the rest of the times are read while the viewer is used: the page is told how far it has got, a few
+        # times a second, and when they are all in
+        last = [0.0]
+
+        def times_progress(done, total):
+            if number != self._scan_number:
+                return
+            self.times = {"done": done, "total": total}
+            now = time.monotonic()
+            if done >= total or now - last[0] >= TIMES_NEWS:
+                last[0] = now
+                self._notify()
+
+        try:
+            found.read_times(times_progress, stopped=lambda: number != self._scan_number)
+        except catalogue.Stopped:
+            return
+        except Exception as error:  # noqa: BLE001 - told to the page
+            traceback.print_exc()
+            if number == self._scan_number:
+                self.times = {"done": 0, "total": 0, "error": f"The times of the files could not be read: {error}"}
+                self._notify()
+            return
+        if number == self._scan_number:
+            self.times = None
+            self.times_number += 1
+            self._notify()
 
     def back(self):
-        """Back to page 1 (a scan still going is stopped)."""
+        """Back to page 1 (a scan still going, or the times still being read, is stopped)."""
         self._scan_number += 1
         self.view = "files"
+        self.times = None
         self.scan = None
         self.error = None
         self._notify()
@@ -276,7 +321,11 @@ class App:
         try:
             names = parse_names(query.get("vars"))
             found.combined(query.get("stream", "0"), names)
-            got = found.limits(query.get("stream", "0"), names, int(query.get("level") or 0), self.missing)
+            # the steps of the years chosen, if the page says
+            got = found.limits(
+                query.get("stream", "0"), names, int(query.get("level") or 0), self.missing,
+                first=int(query.get("first") or 0), last=int(query["last"]) if query.get("last") else None,
+            )
         except ValueError as error:
             return {"ok": False, "error": str(error)}
         except Exception as error:  # noqa: BLE001 - told to the page
