@@ -82,7 +82,7 @@ changed files.
     it. Pause leaves the colour scale as it was until you choose **Automatic scale**.
   - **Depth**: the level to show.
   - **Colours**: the colour map, fixed limits ("Keep this scale for every time"), a
-    logarithmic scale, and coastlines (needs cartopy and geoviews).
+    logarithmic scale, and coastlines (needs cartopy, geoviews and scipy; for FVCOM output, see below).
 - **Middle**: the map. You can zoom, pan, hover to read values, and save a PNG.
 
 Only the map being shown is read: one time step at one level of one file. So output of
@@ -114,7 +114,16 @@ blank, and so is any triangle with a missing node. The grid is worked out once f
 mesh (under a second for 700,000 triangles), and each map after that takes a few
 milliseconds, so Play stays smooth. Zooming far into a fine part of a large mesh shows that
 grid's pixels, not the triangles. A mesh without longitudes and latitudes is drawn in its
-`x` and `y` (metres), without coastlines.
+`x` and `y` (metres).
+
+For a mesh, **Coastlines** draws two lines over the map, in its own longitude and latitude:
+- the mesh's edge (solid), which is the model's own coastline and is exact at any zoom. It
+  also outlines the open-sea boundary, and it needs neither cartopy nor geoviews.
+- Natural Earth's coastline (dashed), clipped to the area, where cartopy is installed. cartopy
+  downloads it the first time each scale is used, and the page says so if that fails. At its
+  finest (1:10 million) it can be well off the mesh in an estuary.
+
+A mesh in metres gets only its edge.
 
 ## Tests
 

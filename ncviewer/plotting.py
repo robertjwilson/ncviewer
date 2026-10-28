@@ -36,6 +36,78 @@ def has_geoviews():
     return True
 
 
+def has_cartopy():
+    try:
+        import cartopy  # noqa: F401
+        import shapely  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+# a note of map_plot's that starts so says the Natural Earth coastline could not be read, which the page tells the user
+COAST_FAILED = "The Natural Earth coastline could not be read"
+# (scale, extent) -> its coastline's (x, y), as reading the shapefile takes a while
+_coastlines = {}
+
+
+def natural_earth_coastline(x_range, y_range, scale):
+    """The Natural Earth coastline (at scale: "10m", "50m" or "110m") in the
+    longitudes x_range and latitudes y_range, as (x, y) arrays with NaN
+    between its lines. cartopy downloads the coastline the first time a
+    scale is used, so this can fail without the internet."""
+    key = (scale, *(round(float(value), 4) for value in (*x_range, *y_range)))
+    if key not in _coastlines:
+        import cartopy.feature
+        from shapely.geometry import box
+
+        (x0, x1), (y0, y1) = x_range, y_range
+        frame = box(x0, y0, x1, y1)
+        feature = cartopy.feature.NaturalEarthFeature("physical", "coastline", scale)
+        xs, ys = [], []
+        for geometry in feature.intersecting_geometries((x0, x1, y0, y1)):
+            clipped = geometry.intersection(frame)
+            for line in getattr(clipped, "geoms", [clipped]):
+                points = np.asarray(line.coords) if not line.is_empty and hasattr(line, "coords") else np.zeros((0, 2))
+                if len(points) >= 2:
+                    xs += [points[:, 0], [np.nan]]
+                    ys += [points[:, 1], [np.nan]]
+        _coastlines[key] = (np.concatenate(xs)[:-1], np.concatenate(ys)[:-1]) if xs else (np.zeros(0), np.zeros(0))
+    return _coastlines[key]
+
+
+def mesh_coastlines(mesh, x, y):
+    """The coastlines drawn over a map of an FVCOM mesh, whose axes are x and
+    y: the mesh's edge, the model's own coastline (solid), and the Natural
+    Earth coastline where cartopy is there and the mesh is in longitude and
+    latitude (dashed). Drawn in the map's own axes, not by geoviews, which
+    would have to reproject the map's image (and needs scipy to). Returns
+    (overlay, notes)."""
+    notes = []
+    edge_x, edge_y = mesh.outline()
+    lines = [hv.Path((edge_x, edge_y), kdims=[x, y]).opts(color="#111827", line_width=1.3)]
+    if mesh.cartesian:
+        notes.append("The mesh is in metres, so only its edge is drawn as the coastline.")
+    elif not has_cartopy():
+        notes.append("Only the mesh's edge is drawn as the coastline: Natural Earth's needs cartopy.")
+    else:
+        # a margin, so the coastline goes on a little past the mesh as the map is panned
+        x0, x1 = float(np.nanmin(mesh.x)), float(np.nanmax(mesh.x))
+        y0, y1 = float(np.nanmin(mesh.y)), float(np.nanmax(mesh.y))
+        pad_x, pad_y = max((x1 - x0) * 0.25, 0.05), max((y1 - y0) * 0.25, 0.05)
+        try:
+            coast_x, coast_y = natural_earth_coastline(
+                (max(x0 - pad_x, -180), min(x1 + pad_x, 180)), (max(y0 - pad_y, -90), min(y1 + pad_y, 90)),
+                coastline_scale(mesh.x, mesh.y),
+            )
+        except Exception as error:  # noqa: BLE001 - told to the user; the mesh's edge is still drawn
+            notes.append(f"{COAST_FAILED} (cartopy downloads it the first time): {error}")
+        else:
+            if len(coast_x):
+                lines.append(hv.Path((coast_x, coast_y), kdims=[x, y]).opts(color="#111827", line_width=1.2, line_dash="dashed"))
+    return hv.Overlay(lines), notes
+
+
 def _render(plot):
     figure = hv.render(plot, backend="bokeh")
     figure.sizing_mode = "stretch_both"
@@ -184,10 +256,10 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
         tools=["hover"], responsive=True, colorbar=True, clabel=about.get("units") or None,
     )
     cartesian = about.get("cartesian", False)
-    geographic = coast and lon is not None and not cartesian and has_geoviews()
-    if coast and cartesian:
-        notes.append("The mesh is in metres, not longitude and latitude, so there are no coastlines.")
-    elif coast and lon is not None and not geographic:
+    # a mesh's coastlines are drawn over its image in its own axes (mesh_coastlines), not by geoviews
+    on_mesh = bool(about.get("mesh"))
+    geographic = coast and lon is not None and not on_mesh and has_geoviews()
+    if coast and lon is not None and not on_mesh and not geographic:
         notes.append("Coastlines need cartopy and geoviews installed.")
     if geographic:
         options.update(geo=True, coastline=coastline_scale(data[x].values, data[y].values))
@@ -203,4 +275,8 @@ def map_plot(data, about, name, when=None, cmap=None, vmin=None, vmax=None, log=
             plot = data.hvplot.quadmesh(**options)
         else:
             plot = data.hvplot.image(**options)
+        if coast and on_mesh:
+            lines, coast_notes = mesh_coastlines(mesh, x, y)
+            plot = (plot * lines).opts(responsive=True)
+            notes += coast_notes
     return _render(plot), notes, [float(low), float(high)]

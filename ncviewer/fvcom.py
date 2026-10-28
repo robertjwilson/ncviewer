@@ -63,6 +63,7 @@ class Mesh:
         self.triangles = np.asarray(triangles, dtype="int64")
         self.cartesian = cartesian
         self._raster = None
+        self._outline = None
 
     @classmethod
     def read(cls, path):
@@ -98,6 +99,52 @@ class Mesh:
         if self._raster is None:
             self._raster = Raster(self)
         return self._raster
+
+    def outline(self):
+        """The edge of the mesh, the model's coastline (and its open
+        boundary): the edges in only one triangle, joined into lines node
+        to node, as (x, y) arrays with NaN between the lines (made the
+        first time it is asked for)."""
+        if self._outline is None:
+            self._outline = _outline(self.x, self.y, self.triangles)
+        return self._outline
+
+
+def _outline(x, y, triangles):
+    edges = np.concatenate([triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]])
+    edges.sort(axis=1)
+    # each edge as one number, which np.unique sorts far faster than pairs
+    size = int(triangles.max()) + 1
+    unique, counts = np.unique(edges[:, 0] * size + edges[:, 1], return_counts=True)
+    single = unique[counts == 1]
+    edges = np.stack([single // size, single % size], axis=1)
+    # each node's edges on the boundary (two for a node on a simple edge, more where the edge meets itself)
+    neighbours = {}
+    for a, b in edges.tolist():
+        neighbours.setdefault(a, []).append(b)
+        neighbours.setdefault(b, []).append(a)
+    used = set()
+    xs, ys = [], []
+    for a, b in edges.tolist():
+        if (a, b) in used:
+            continue
+        # walk from a along the boundary until it comes back, or can go no further
+        line = [a, b]
+        used.add((a, b))
+        while True:
+            here, before = line[-1], line[-2]
+            step = next((n for n in neighbours[here] if n != before and (min(here, n), max(here, n)) not in used), None)
+            if step is None:
+                break
+            used.add((min(here, step), max(here, step)))
+            line.append(step)
+            if step == line[0]:
+                break
+        xs += [x[line], [np.nan]]
+        ys += [y[line], [np.nan]]
+    if not xs:
+        return np.zeros(0), np.zeros(0)
+    return np.concatenate(xs)[:-1], np.concatenate(ys)[:-1]
 
 
 class Raster:

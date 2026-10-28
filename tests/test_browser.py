@@ -258,10 +258,13 @@ def test_play_keeps_the_zoom_and_the_scale(page, simulation):
     assert _figure_ranges(tab) == [-0.5, 9.5, -0.5, 11.5]
 
 
-def test_fvcom_output(page, tmp_path):
+def test_fvcom_output(page, tmp_path, monkeypatch):
     from simulations import fvcom_simulation
 
     tab, app = page
+    # without geoviews, the mesh's edge can still be drawn as its coastline
+    monkeypatch.setattr(ncapp, "_has_geoviews", lambda: False)
+    tab.reload()
     root = fvcom_simulation(str(tmp_path / "fvcom"))
     tab.fill("#f-simdir", root)
     tab.wait_for_function("() => !document.querySelector('#continue').disabled")
@@ -280,6 +283,10 @@ def test_fvcom_output(page, tmp_path):
     # the sigma layers, by name
     assert tab.locator("#v-level option").all_text_contents() == ["Layer 1 (surface)", "Layer 2", "Layer 3", "Layer 4", "Layer 5 (bottom)"]
     tab.select_option("#v-level", "4")
+    tab.wait_for_selector("#plot-busy[hidden]", state="attached")
+    assert tab.is_hidden("#plot-error")
+    assert tab.is_enabled("#v-coast") and "the model's own coastline" in tab.get_attribute("#v-coast-label", "title")
+    tab.check("#v-coast")
     tab.wait_for_selector("#plot-busy[hidden]", state="attached")
     assert tab.is_hidden("#plot-error")
     tab.screenshot(path=os.environ.get("NCVIEWER_SCREENSHOT", "/dev/null"), type="png")

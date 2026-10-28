@@ -12,9 +12,10 @@ dependencies:
   - bokeh>=3.1
   - holoviews
   - hvplot
-  # coastlines on maps
+  # coastlines on maps (geoviews needs scipy to put an image on its map)
   - cartopy
   - geoviews
+  - scipy
   # faster drawing of large grids
   - datashader
   # tests

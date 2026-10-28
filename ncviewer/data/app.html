@@ -743,10 +743,15 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     $("v-vmin").value = pick.vmin;
     $("v-vmax").value = pick.vmax;
     $("v-log").checked = pick.log;
-    $("v-coast").checked = pick.coast && state.coast;
-    $("v-coast").disabled = !state.coast;
+    // an FVCOM mesh's edge is its coastline, which needs neither cartopy nor geoviews
+    const onMesh = Boolean(now.mesh);
+    const canCoast = state.coast || onMesh;
+    $("v-coast").checked = pick.coast && canCoast;
+    $("v-coast").disabled = !canCoast;
     $("v-coast-label").classList.toggle("is-off", $("v-coast").disabled);
-    $("v-coast-label").title = state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)";
+    $("v-coast-label").title = onMesh
+      ? "The mesh's edge, the model's own coastline (solid), and Natural Earth's coastline (dashed) where cartopy is installed"
+      : (state.coast ? "" : "Coastlines need cartopy and geoviews (conda install -c conda-forge geoviews)");
   }
 
   // the time: the slider and the arrows
@@ -967,6 +972,13 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
     };
   }
 
+  // a problem with what was drawn, said once (the Natural Earth coastline that could not be fetched)
+  let lastWarning = null;
+  function tellWarning(text) {
+    if (text && text !== lastWarning) toast(text);
+    lastWarning = text || null;
+  }
+
   function showPlotError(text) {
     $("plot-error").textContent = text;
     $("plot-error").hidden = false;
@@ -1002,6 +1014,7 @@ body.is-viewer main.wrap { max-width: none; padding: 16px; }
       }
       $("plot-error").hidden = true;
       lastClim = reply.clim || null;
+      tellWarning(reply.warning);
       await draw(reply.item);
       if (number !== plotNumber) return;
       $("plot-empty").hidden = true;

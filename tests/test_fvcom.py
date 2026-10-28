@@ -1,6 +1,8 @@
 """FVCOM output: told from other output, its variables on the mesh listed,
 and the mesh drawn as an image (ncviewer.fvcom)."""
 
+import json
+
 import netCDF4
 import numpy as np
 import pytest
@@ -105,7 +107,9 @@ def test_a_mesh_in_metres(tmp_path):
         data, when = found.field(0, ["temp"], 0, 0)
         item, notes, clim = plotting.map_plot(data, found.combined(0, ["temp"]), "temp", when, coast=True, mesh=mesh)
         assert "x (m)" in str(item)
-        assert any("no coastlines" in note for note in notes)
+        # its edge is its coastline; Natural Earth's cannot be placed on metres
+        assert any("only its edge is drawn" in note for note in notes)
+        assert _lines(item) == 1
     finally:
         found.close()
 
@@ -143,3 +147,97 @@ def test_one_file(tmp_path):
     with catalogue.open_dataset(path) as ds:
         # (xarray before 2023 refused siglay and siglev, which are then left out)
         assert "temp" in ds.data_vars
+
+
+# ---- coastlines ----
+
+def _lines(item):
+    """How many lines (holoviews Paths) a map has over its image."""
+    return json.dumps(item).count('"glyph": {"type": "object", "name": "MultiLine"')
+
+
+def _ring_edges(x, y, mesh):
+    """The edges along the outline, as pairs of nodes."""
+    nodes = {(round(float(a), 9), round(float(b), 9)): number for number, (a, b) in enumerate(zip(mesh.x, mesh.y))}
+    path = [nodes.get((round(float(a), 9), round(float(b), 9))) for a, b in zip(x, y)]
+    return [tuple(sorted(pair)) for pair in zip(path, path[1:]) if None not in pair]
+
+
+def test_the_outline_is_the_edge_of_the_mesh():
+    lon, lat, nv = fvcom_mesh()
+    mesh = fvcom.Mesh(lon, lat, nv.T - 1)
+    x, y = mesh.outline()
+    assert mesh.outline()[0] is x
+    # one closed line: 10 squares along each of 4 sides, less the corner's 5 + 5, plus its 5 + 5 inner sides
+    assert not np.isnan(x).any() and (x[0], y[0]) == (x[-1], y[-1]) and len(x) == 41
+    # every edge on it is in one triangle only
+    triangles = mesh.triangles
+    edges = [tuple(sorted(edge)) for t in triangles.tolist() for edge in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0]))]
+    for edge in _ring_edges(x, y, mesh):
+        assert edges.count(edge) == 1
+
+
+def test_an_island_is_a_line_of_its_own():
+    lon, lat, nv = fvcom_mesh()
+    triangles = nv.T - 1
+    # take out the two triangles of a square in the middle
+    middle = np.array([(abs(lon[t] - -4.85).max() < 0.06 and abs(lat[t] - 50.25).max() < 0.06) for t in triangles])
+    assert middle.sum() == 2
+    x, y = fvcom.Mesh(lon, lat, triangles[~middle]).outline()
+    assert np.isnan(x).sum() == 1
+    island = x[np.flatnonzero(np.isnan(x))[0] + 1:]
+    assert len(island) == 5
+
+
+def _temp_map(found, **options):
+    data, when = found.field(0, ["temp"], 0, 0)
+    return plotting.map_plot(data, found.combined(0, ["temp"]), "temp", when, mesh=found.mesh(0), **options)
+
+
+def test_coastlines_on_a_mesh(found, monkeypatch):
+    # Natural Earth's coastline as cartopy would give it, without the internet
+    asked = []
+
+    def coastline(x_range, y_range, scale):
+        asked.append((x_range, y_range, scale))
+        return np.array([-4.9, -4.1, np.nan, -4.8, -4.2]), np.array([50.3, 50.4, np.nan, 50.9, 50.8])
+
+    monkeypatch.setattr(plotting, "has_cartopy", lambda: True)
+    monkeypatch.setattr(plotting, "natural_earth_coastline", coastline)
+    item, notes, _ = _temp_map(found)
+    assert _lines(item) == 0 and not asked
+    item, notes, _ = _temp_map(found, coast=True)
+    # the mesh's edge and Natural Earth's, in the map's own longitude and latitude (no geoviews needed)
+    assert _lines(item) == 2
+    (x0, x1), (y0, y1), scale = asked[0]
+    assert x0 < -5 and x1 > -4 and y0 < 50 and y1 > 51 and scale == "10m"
+    assert "Longitude" in str(item)
+    # without cartopy, the mesh's edge alone
+    monkeypatch.setattr(plotting, "has_cartopy", lambda: False)
+    item, notes, _ = _temp_map(found, coast=True)
+    assert _lines(item) == 1 and any("needs cartopy" in note for note in notes)
+
+
+def test_a_coastline_that_cannot_be_fetched(found, monkeypatch):
+    def offline(*args):
+        raise OSError("no internet")
+
+    monkeypatch.setattr(plotting, "has_cartopy", lambda: True)
+    monkeypatch.setattr(plotting, "natural_earth_coastline", offline)
+    item, notes, _ = _temp_map(found, coast=True)
+    # the mesh's edge is still drawn, and the user is told
+    assert _lines(item) == 1
+    assert any(note.startswith(plotting.COAST_FAILED) and "no internet" in note for note in notes)
+
+
+def test_the_natural_earth_coastline():
+    pytest.importorskip("cartopy")
+    pytest.importorskip("shapely")
+    try:
+        x, y = plotting.natural_earth_coastline((-5.2, -3.8), (49.8, 51.2), "50m")
+    except Exception as error:  # noqa: BLE001 - not downloaded, and no internet
+        pytest.skip(f"Natural Earth's coastline cannot be fetched here: {error}")
+    finite = np.isfinite(x)
+    # Cornwall and Devon, cut to the box
+    assert finite.sum() > 10
+    assert (x[finite] >= -5.2).all() and (x[finite] <= -3.8).all() and (y[finite] >= 49.8).all() and (y[finite] <= 51.2).all()

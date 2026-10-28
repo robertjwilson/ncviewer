@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-coast = ["cartopy", "geoviews"]
+coast = ["cartopy", "geoviews", "scipy"]
 test = ["pytest", "playwright"]
 
 [project.scripts]

@@ -250,8 +250,11 @@ class App:
                 notes.append("Every cell is missing, so there is nothing to show. Check the missing values.")
             record = found.streams[int(stream)]
             _, index, _ = record["steps"][min(max(step, 0), len(record["steps"]) - 1)]
+            # said to the user, as the coastline they asked for is not all there
+            warning = next((note for note in notes if note.startswith(plotting.COAST_FAILED)), None)
             return {
                 "ok": True, "item": item, "notes": notes, "clim": clim, "when": when, "n_missing": n_missing,
+                "warning": warning,
                 "file": os.path.relpath(record["files"][index], found.simdir),
             }
         except ValueError as error:
